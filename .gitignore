@@ -3,3 +3,5 @@
 *.out
 *.log
 *.bin
+venv/
+__pycache__/
