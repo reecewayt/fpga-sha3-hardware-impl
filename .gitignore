@@ -3,5 +3,7 @@
 *.out
 *.log
 *.bin
+.local
+build/
 venv/
 __pycache__/
