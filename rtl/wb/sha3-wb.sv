@@ -1,6 +1,13 @@
 /*
     sha3-wb.sv - Wishbone interface for SHA3 (Keccak) IP Core
 
+    Authors: Claude and Truong
+
+    Description: This module creates a Wishbone peripheral that controls
+    a SHA3 IP core. It implements input/output FIFOs to transport data from
+    and to the user program. The module provides registers for control/status
+    to initiate encryption requests with a selected SHA3 function.
+
     Address map (wb_adr_i[5:2] decodes the register):
       0x00  Control       R/W  START[0], ABORT[2], MODE[4:3]
       0x04  Status        R    IDLE[0], BUSY[1], DONE[2], IN_EMPTY[4], IN_FULL[5],
@@ -159,7 +166,7 @@ module sha3_wb
     logic [4:0]   out_rd_ptr;   // next word to read
 
     wire out_fifo_empty = (out_rd_ptr >= out_wr_cnt);
-    wire out_fifo_full  = (out_wr_cnt == OUT_DEPTH[4:0]);
+    wire out_fifo_full  = (out_wr_cnt - out_rd_ptr == OUT_DEPTH[4:0]); // full if all slots occupied
     wire [4:0] out_fifo_level = out_wr_cnt - out_rd_ptr;
 
     // ================================================================
@@ -395,9 +402,11 @@ module sha3_wb
                             4'h2: begin // IN_FIFO_DATA (0x08)
                                 if (in_fifo_full) begin
                                     // Stall: withhold ACK until FIFO has space.
-                                    // err_fifo_overflow is informational only when
-                                    // stalling; a true overflow can't occur here.
-                                    wb_ack_o <= 1'b0;
+                                    // Set err_fifo_overflow every cycle a write is
+                                    // attempted while full so firmware can detect
+                                    // backpressure without counting pushes in SW.
+                                    err_fifo_overflow <= 1'b1;
+                                    wb_ack_o          <= 1'b0;
                                 end else begin
                                     in_fifo[in_wr_ptr[IFW-2:0]] <= wb_dat_i;
                                     in_wr_ptr                   <= in_wr_ptr + 1'b1;

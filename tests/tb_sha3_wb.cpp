@@ -1,8 +1,11 @@
 /*
     tb_sha3_wb.cpp - Verilator testbench for sha3_wb Wishbone controller
 
-    This testbench acts as a Wishbone master and directly drives the SHA3
-    core interface, replacing the real keccak core with a C++ stub that:
+    Authors: Claude and Truong
+
+    Description: This testbench creates several tests to check the functionality
+    of the sha3-wb.sv module. This testbench acts as a Wishbone master and directly 
+    drives the SHA3 core interface, replacing the real keccak core with a C++ stub that:
       - Accepts data words presented by the controller (sha3_out_rdy=1)
       - Stores up to 16 words internally
       - After observing is_last, waits HASH_LATENCY cycles then asserts
@@ -35,6 +38,12 @@
 #include <cassert>
 #include <vector>
 
+// FIFO depth under test — set via -DTEST_FIFO_DEPTH=N at compile time.
+// Must match the RTL FIFO_DEPTH parameter.  Default 64 matches the RTL default.
+#ifndef TEST_FIFO_DEPTH
+#define TEST_FIFO_DEPTH 64
+#endif
+
 #include "Vsha3_wb.h"
 #include "verilated.h"
 
@@ -61,6 +70,7 @@ static constexpr uint32_t ST_OUT_FULL  = (1u << 7);
 static constexpr uint32_t ST_ERR_ILL   = (1u << 8);
 static constexpr uint32_t ST_ERR_UF    = (1u << 9);
 static constexpr uint32_t ST_ERR_OF    = (1u << 10);
+static constexpr uint32_t ST_ERR_MASK  = ST_ERR_ILL | ST_ERR_UF | ST_ERR_OF;
 
 // ============================================================================
 // Keccak core stub (C++ model)
@@ -317,6 +327,40 @@ static void ctrl_write_words(const uint32_t* words, int n) {
 static void ctrl_read_words(uint32_t* dst, int n) {
     for (int i = 0; i < n; i++)
         dst[i] = wb_read(0x10);
+}
+
+// Perform a WB write but give up if ACK is not received within max_stalls cycles.
+// Returns the number of stall cycles observed on success, or -1 if no ACK arrived
+// within the budget.  Use this to verify that a full input FIFO correctly withholds
+// ACK (bus stall) rather than silently accepting or dropping data.
+// After a timeout the Wishbone transaction is abandoned (cyc/stb de-asserted) so
+// subsequent helpers see a clean bus.
+static int wb_write_with_timeout(uint8_t addr, uint32_t data, int max_stalls) {
+    dut->wb_cyc_i = 1;
+    dut->wb_stb_i = 1;
+    dut->wb_we_i  = 1;
+    dut->wb_adr_i = addr;
+    dut->wb_dat_i = data;
+    dut->wb_sel_i = 0xF;
+
+    int stalls = 0;
+    for (int guard = 0; guard < max_stalls; guard++) {
+        tick();
+        if (dut->wb_ack_o) {
+            dut->wb_cyc_i = 0;
+            dut->wb_stb_i = 0;
+            dut->wb_we_i  = 0;
+            tick(); // idle cycle
+            return stalls;
+        }
+        stalls++;
+    }
+    // Timeout: abandon the incomplete transaction cleanly.
+    dut->wb_cyc_i = 0;
+    dut->wb_stb_i = 0;
+    dut->wb_we_i  = 0;
+    tick(); // idle cycle
+    return -1; // no ACK within budget
 }
 
 // ============================================================================
@@ -745,6 +789,390 @@ static bool test_illegal_mode_change() {
     return test_end("T14: Illegal mode change while BUSY", pass);
 }
 
+// Test 15: FIFO full detection
+//   Pre-fill the input FIFO to capacity (TEST_FIFO_DEPTH words) without
+//   asserting START.  The core remains IDLE so no absorption occurs.
+//   Verify STATUS.IN_FULL=1 and IN_FIFO_LEVEL==DEPTH, then start the core
+//   and drain it to confirm normal operation is recovered afterwards.
+static bool test_fifo_full_flag() {
+    test_begin("T15: FIFO full flag (fill to capacity, check IN_FULL + IN_FIFO_LEVEL)");
+    bool pass = true;
+
+    constexpr int DEPTH = TEST_FIFO_DEPTH;
+
+    ctrl_reset();
+    ctrl_set_mode(3);   // SHA3-512 → 16 output words
+
+    // --- Pre-fill FIFO to capacity without starting ---
+    std::vector<uint32_t> words((size_t)DEPTH);
+    for (int i = 0; i < DEPTH; i++) words[(size_t)i] = 0xF1F00000u | (uint32_t)i;
+    ctrl_write_words(words.data(), DEPTH);
+
+    // --- Verify IN_FIFO_LEVEL ---
+    uint32_t level = wb_read(0x0C);
+    std::cout << "  IN_FIFO_LEVEL = " << level << " (expected " << DEPTH << ")\n";
+    if (level != (uint32_t)DEPTH) {
+        std::cout << "  FAIL: IN_FIFO_LEVEL mismatch\n";
+        pass = false;
+    }
+
+    // --- Verify STATUS flags ---
+    uint32_t st = wb_read(0x04);
+    std::cout << "  STATUS = 0x" << std::hex << st << std::dec << "\n";
+    if (!(st & ST_IN_FULL)) {
+        std::cout << "  FAIL: IN_FULL not asserted after filling FIFO\n";
+        pass = false;
+    } else {
+        std::cout << "  OK: IN_FULL asserted\n";
+    }
+    if (st & ST_IN_EMPTY) {
+        std::cout << "  FAIL: IN_EMPTY incorrectly set while FIFO is full\n";
+        pass = false;
+    }
+    if (!(st & ST_IDLE)) {
+        std::cout << "  FAIL: core should be IDLE (START not yet asserted)\n";
+        pass = false;
+    }
+    if (st & ST_ERR_MASK) {
+        std::cout << "  FAIL: unexpected error bits set\n";
+        pass = false;
+    }
+
+    // --- Drain: start core and absorb the queued data ---
+    // Limit msg_words to the Keccak stub's 16-word capacity so the digest
+    // verification is correct regardless of TEST_FIFO_DEPTH.
+    int msg_words = (DEPTH <= 16) ? DEPTH : 16;
+    ctrl_set_msglen((uint64_t)msg_words * 4);
+    ctrl_start();
+    wait_for_status(ST_DONE);
+
+    uint32_t got[16] = {};
+    ctrl_read_words(got, 16);
+    uint32_t expected[16] = {};
+    for (int i = 0; i < msg_words; i++) expected[i] = words[(size_t)i];
+    pass &= verify_words(expected, got, 16, "fifo_full_drain");
+
+    uint32_t final_st = wb_read(0x04);
+    if (!(final_st & ST_IDLE)) {
+        std::cout << "  FAIL: not IDLE after digest drain\n";
+        pass = false;
+    }
+    if (final_st & ST_ERR_MASK) {
+        std::cout << "  FAIL: error bits set after drain: 0x"
+                  << std::hex << (final_st & ST_ERR_MASK) << std::dec << "\n";
+        pass = false;
+    }
+
+    return test_end("T15: FIFO full flag", pass);
+}
+
+// Test 16: FIFO write stall on full FIFO
+//   After filling the input FIFO to capacity with the core IDLE (nothing drains
+//   it), attempt one additional write to IN_FIFO_DATA.  Because the Wishbone
+//   controller withholds ACK on full-FIFO writes and no absorption can occur,
+//   the bus must stall for every cycle in the observation window.
+//   A timeout-aware write helper is used so the test terminates cleanly.
+static bool test_fifo_write_stall() {
+    test_begin("T16: FIFO write stall on full FIFO (bus must withhold ACK)");
+    bool pass = true;
+
+    constexpr int DEPTH        = TEST_FIFO_DEPTH;
+    constexpr int STALL_BUDGET = 20;  // cycles to observe stall before giving up
+
+    ctrl_reset();
+    ctrl_set_mode(3);
+
+    // --- Fill FIFO to capacity, core stays IDLE ---
+    std::vector<uint32_t> words((size_t)(DEPTH + 1));
+    for (int i = 0; i <= DEPTH; i++) words[(size_t)i] = 0xB1B20000u | (uint32_t)i;
+    ctrl_write_words(words.data(), DEPTH);
+
+    // Sanity check: FIFO must be full.
+    uint32_t st = wb_read(0x04);
+    if (!(st & ST_IN_FULL)) {
+        std::cout << "  FAIL: FIFO not full before stall test\n";
+        pass = false;
+    }
+    if (!(st & ST_IDLE)) {
+        std::cout << "  FAIL: core not IDLE before stall test\n";
+        pass = false;
+    }
+
+    // --- Attempt the (DEPTH+1)th write — expect indefinite stall ---
+    // The core is IDLE so no word is consumed during the observation window.
+    // ACK must be withheld for every tick in STALL_BUDGET; result==-1 is a pass.
+    std::cout << "  Attempting overflow write (" << STALL_BUDGET
+              << "-cycle timeout, expect stall)...\n";
+    int result = wb_write_with_timeout(0x08, words[(size_t)DEPTH], STALL_BUDGET);
+    std::cout << "  Result = " << result
+              << "  (-1 = correctly stalled, >=0 = unexpected ACK after N stalls)\n";
+    if (result == -1) {
+        std::cout << "  OK: ACK withheld for all " << STALL_BUDGET
+                  << " cycles — write stall confirmed\n";
+    } else {
+        std::cout << "  FAIL: expected indefinite stall but ACK arrived after "
+                  << result << " stall cycle(s)\n";
+        pass = false;
+    }
+
+    // --- Post-stall checks ---
+    // The abandoned write must NOT have advanced the FIFO pointer.
+    uint32_t level = wb_read(0x0C);
+    std::cout << "  IN_FIFO_LEVEL after abandoned write = " << level
+              << " (expected " << DEPTH << ")\n";
+    if (level != (uint32_t)DEPTH) {
+        std::cout << "  FAIL: FIFO level changed despite stalled write\n";
+        pass = false;
+    }
+    // IN_FULL should still be set.
+    uint32_t st2 = wb_read(0x04);
+    if (!(st2 & ST_IN_FULL)) {
+        std::cout << "  FAIL: IN_FULL cleared unexpectedly after stall\n";
+        pass = false;
+    } else {
+        std::cout << "  OK: IN_FULL still asserted after abandoned write\n";
+    }
+    // ERR_OF must be set as an informational diagnostic: a write was attempted
+    // while the FIFO was full.  The data is not lost (bus stall protects it),
+    // but the flag tells firmware that it hit the FIFO backpressure limit.
+    if (st2 & ST_ERR_OF) {
+        std::cout << "  OK: ERR_OF set — backpressure correctly flagged\n";
+    } else {
+        std::cout << "  FAIL: ERR_OF not set after stalled write (flag should indicate backpressure)\n";
+        pass = false;
+    }
+
+    ctrl_reset();
+    return test_end("T16: FIFO write stall", pass);
+}
+
+// Test 17: ERR_OF dedicated flag test
+//   Fill the input FIFO to capacity while the core is IDLE so no absorption
+//   occurs.  Attempt a (DEPTH+1)th write via the stall path, then verify
+//   STATUS.ERR_OF=1.  Confirm the flag is cleared by ABORT.
+static bool test_err_of() {
+    test_begin("T17: ERR_OF — overflow flag set on full-FIFO write attempt");
+    bool pass = true;
+
+    constexpr int DEPTH = TEST_FIFO_DEPTH;
+
+    ctrl_reset();
+    ctrl_set_mode(3);
+
+    // Verify no errors before the test starts.
+    if (wb_read(0x04) & ST_ERR_MASK) {
+        std::cout << "  FAIL: error bits set before test started\n";
+        pass = false;
+    }
+
+    // Fill the FIFO to capacity; core stays IDLE.
+    std::vector<uint32_t> words((size_t)(DEPTH + 1));
+    for (int i = 0; i <= DEPTH; i++) words[(size_t)i] = 0xE0F00000u | (uint32_t)i;
+    ctrl_write_words(words.data(), DEPTH);
+
+    // Confirm FIFO is now full before the overflow attempt.
+    uint32_t st = wb_read(0x04);
+    if (!(st & ST_IN_FULL)) {
+        std::cout << "  FAIL: IN_FULL not set after filling FIFO\n";
+        pass = false;
+    }
+    // ERR_OF must be clear at this point (filling succeeded without stalling).
+    if (st & ST_ERR_OF) {
+        std::cout << "  FAIL: ERR_OF pre-asserted before overflow attempt\n";
+        pass = false;
+    } else {
+        std::cout << "  OK: ERR_OF clear before overflow attempt\n";
+    }
+
+    // Attempt the overflow write; the bus stalls and sets ERR_OF.
+    constexpr int BUDGET = 5;
+    int result = wb_write_with_timeout(0x08, words[(size_t)DEPTH], BUDGET);
+    std::cout << "  Stall result = " << result << " (expected -1)\n";
+    if (result != -1) {
+        std::cout << "  FAIL: expected stall (no ACK) but got ACK after " << result << " cycles\n";
+        pass = false;
+    }
+
+    // ERR_OF must now be set.
+    uint32_t st2 = wb_read(0x04);
+    std::cout << "  STATUS after overflow attempt = 0x"
+              << std::hex << st2 << std::dec << "\n";
+    if (st2 & ST_ERR_OF) {
+        std::cout << "  OK: ERR_OF set correctly after stalled write\n";
+    } else {
+        std::cout << "  FAIL: ERR_OF not set after stalled write\n";
+        pass = false;
+    }
+    // FIFO level must be unchanged (stall protected the pointer).
+    uint32_t level = wb_read(0x0C);
+    if (level != (uint32_t)DEPTH) {
+        std::cout << "  FAIL: IN_FIFO_LEVEL changed despite stall (expected "
+                  << DEPTH << ", got " << level << ")\n";
+        pass = false;
+    } else {
+        std::cout << "  OK: IN_FIFO_LEVEL unchanged (" << DEPTH << ")\n";
+    }
+
+    // ERR_OF must be cleared by ABORT.
+    ctrl_reset();
+    uint32_t st3 = wb_read(0x04);
+    if (st3 & ST_ERR_OF) {
+        std::cout << "  FAIL: ERR_OF not cleared after ABORT\n";
+        pass = false;
+    } else {
+        std::cout << "  OK: ERR_OF cleared by ABORT\n";
+    }
+
+    return test_end("T17: ERR_OF flag", pass);
+}
+
+// Test 18: ERR_UF dedicated flag test
+//   Complete a full hash, read all digest words, then attempt one additional
+//   read from OUT_FIFO_DATA while the output FIFO is empty.  Verify that
+//   STATUS.ERR_UF=1 and that the read returns 0x00000000 (not garbage).
+//   Confirm the flag is cleared by ABORT.
+static bool test_err_uf() {
+    test_begin("T18: ERR_UF — underflow flag set on empty-FIFO read");
+    bool pass = true;
+
+    // Run a small SHA3-512 hash so we have 16 digest words to drain.
+    uint32_t words[2] = { 0xDEAD1234, 0xBEEF5678 };
+    ctrl_reset();
+    ctrl_set_mode(3);       // SHA3-512 → 16 words
+    ctrl_set_msglen(8);
+    ctrl_start();
+    ctrl_write_words(words, 2);
+    wait_for_status(ST_DONE);
+
+    // Drain all 16 words.
+    uint32_t digest[16] = {};
+    ctrl_read_words(digest, 16);
+
+    // OUT_FIFO should now be empty; verify OUT_EMPTY flag.
+    uint32_t st = wb_read(0x04);
+    std::cout << "  STATUS after drain = 0x" << std::hex << st << std::dec << "\n";
+    if (!(st & ST_OUT_EMPTY)) {
+        std::cout << "  FAIL: OUT_EMPTY not set after draining all digest words\n";
+        pass = false;
+    } else {
+        std::cout << "  OK: OUT_EMPTY set after drain\n";
+    }
+    // ERR_UF must be clear before the underflow read.
+    if (st & ST_ERR_UF) {
+        std::cout << "  FAIL: ERR_UF pre-asserted before underflow read\n";
+        pass = false;
+    } else {
+        std::cout << "  OK: ERR_UF clear before underflow attempt\n";
+    }
+
+    // Attempt to read from the now-empty output FIFO.
+    uint32_t uf_val = wb_read(0x10);
+    std::cout << "  Read from empty OUT_FIFO returned 0x"
+              << std::hex << uf_val << std::dec
+              << " (expected 0x00000000)\n";
+    if (uf_val != 0) {
+        std::cout << "  FAIL: underflow read should return 0\n";
+        pass = false;
+    } else {
+        std::cout << "  OK: underflow read returned 0\n";
+    }
+
+    // ERR_UF must now be set.
+    uint32_t st2 = wb_read(0x04);
+    std::cout << "  STATUS after underflow read = 0x"
+              << std::hex << st2 << std::dec << "\n";
+    if (st2 & ST_ERR_UF) {
+        std::cout << "  OK: ERR_UF set correctly\n";
+    } else {
+        std::cout << "  FAIL: ERR_UF not set after reading empty output FIFO\n";
+        pass = false;
+    }
+
+    // ERR_UF must be cleared by ABORT.
+    ctrl_reset();
+    uint32_t st3 = wb_read(0x04);
+    if (st3 & ST_ERR_UF) {
+        std::cout << "  FAIL: ERR_UF not cleared after ABORT\n";
+        pass = false;
+    } else {
+        std::cout << "  OK: ERR_UF cleared by ABORT\n";
+    }
+
+    return test_end("T18: ERR_UF flag", pass);
+}
+
+// Test 19: OUT_FULL flag
+//   SHA3-512 produces 16 digest words which exactly fills the 16-deep output
+//   FIFO.  Verify STATUS.OUT_FULL=1 is set immediately after DONE is observed
+//   (before any words are read).  Verify the flag clears as the last word is
+//   read and OUT_FIFO_LEVEL drops below 16.
+static bool test_out_full() {
+    test_begin("T19: OUT_FULL — asserted when output FIFO holds 16 words (SHA3-512)");
+    bool pass = true;
+
+    uint32_t words[4] = { 0x51510001, 0x51510002, 0x51510003, 0x51510004 };
+    ctrl_reset();
+    ctrl_set_mode(3);       // SHA3-512 → 16 output words
+    ctrl_set_msglen(16);
+    ctrl_start();
+    ctrl_write_words(words, 4);
+    wait_for_status(ST_DONE);
+
+    // Check OUT_FULL immediately after DONE, before any reads.
+    uint32_t st = wb_read(0x04);
+    std::cout << "  STATUS after DONE (before any reads) = 0x"
+              << std::hex << st << std::dec << "\n";
+    if (st & ST_OUT_FULL) {
+        std::cout << "  OK: OUT_FULL asserted (16 words loaded)\n";
+    } else {
+        std::cout << "  FAIL: OUT_FULL not asserted after SHA3-512 DONE\n";
+        pass = false;
+    }
+    uint32_t lvl = wb_read(0x14);
+    std::cout << "  OUT_FIFO_LVL = " << lvl << " (expected 16)\n";
+    if (lvl != 16) {
+        std::cout << "  FAIL: OUT_FIFO_LVL should be 16\n";
+        pass = false;
+    }
+
+    // Read one word — OUT_FULL must clear because level drops to 15.
+    uint32_t first = wb_read(0x10);
+    (void)first;
+    uint32_t st2 = wb_read(0x04);
+    if (st2 & ST_OUT_FULL) {
+        std::cout << "  FAIL: OUT_FULL still set after reading one word\n";
+        pass = false;
+    } else {
+        std::cout << "  OK: OUT_FULL cleared after first read (level now 15)\n";
+    }
+
+    // Drain remaining 15 words and verify eventual IDLE + OUT_EMPTY.
+    uint32_t rest[15] = {};
+    ctrl_read_words(rest, 15);
+    uint32_t st3 = wb_read(0x04);
+    if (!(st3 & ST_IDLE)) {
+        std::cout << "  FAIL: not IDLE after full drain\n";
+        pass = false;
+    } else {
+        std::cout << "  OK: IDLE after draining all digest words\n";
+    }
+    if (!(st3 & ST_OUT_EMPTY)) {
+        std::cout << "  FAIL: OUT_EMPTY not set after full drain\n";
+        pass = false;
+    } else {
+        std::cout << "  OK: OUT_EMPTY set after full drain\n";
+    }
+    if (st3 & ST_ERR_MASK) {
+        std::cout << "  FAIL: unexpected error bits: 0x"
+                  << std::hex << (st3 & ST_ERR_MASK) << std::dec << "\n";
+        pass = false;
+    }
+
+    return test_end("T19: OUT_FULL flag", pass);
+}
+
+
+
 // ============================================================================
 // Main
 // ============================================================================
@@ -773,6 +1201,11 @@ int main(int argc, char** argv) {
     test_mode_sha3_384();
     test_mode_sha3_512();
     test_illegal_mode_change();
+    test_fifo_full_flag();
+    test_fifo_write_stall();
+    test_err_of();
+    test_err_uf();
+    test_out_full();
 
     // ----------------------------------------------------------------
     // Summary
