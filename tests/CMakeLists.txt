@@ -14,6 +14,7 @@ function(add_verilator_test TEST_NAME TOP_MODULE)
     verilate(${TEST_NAME} 
         SOURCES ${RTL_SOURCES}
         TOP_MODULE ${TOP_MODULE}
+        PREFIX V${TOP_MODULE}
         VERILATOR_ARGS --timing
     )
     
@@ -32,6 +33,7 @@ endfunction()
 # =============================================================================
 
 add_verilator_test(tb_rconst_lut rconst_lut ${RTL_DIR}/rconst_lut.sv)
+add_verilator_test(tb_round round ${RTL_DIR}/sha3_pkg.sv ${RTL_DIR}/round.sv)
 
 # To add more tests, just add lines like:
 # add_verilator_test(tb_keccak_round keccak_round ${RTL_DIR}/keccak_round.sv)

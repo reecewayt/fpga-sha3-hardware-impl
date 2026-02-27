@@ -7,3 +7,10 @@
 build/
 venv/
 __pycache__/
+
+# Vivado synthesis outputs
+synth_reports/
+*.dcp
+*.jou
+vivado*
+.Xil/
