@@ -140,6 +140,7 @@ module sha3_wb
     // Registered prefetch buffer (BRAM output register)
     logic [31:0] in_fifo_rdata;  // current head word, captured from BRAM
     logic        in_head_valid;  // in_fifo_rdata is valid and ready to consume
+    logic        in_data_available; // pipeline stage: FIFO has data (1 cycle before valid)
 
     // Pre-compute next-cycle pointer values so the BRAM read address
     // is issued one cycle ahead, absorbing the BRAM read latency.
@@ -154,14 +155,15 @@ module sha3_wb
     wire           in_empty_nxt  = (in_rd_ptr_nxt == in_wr_ptr_nxt);
 
     // ================================================================
-    // Output FIFO — backed by BRAM.
-    //   Loaded all-at-once when the digest is ready; read word-by-word
-    //   by firmware.  Reads already occur inside always_ff so the BRAM
-    //   write-first / read-first mode infers cleanly.
+    // Output FIFO — implemented as registers (not BRAM).
+    //   Only 16 words (512 bits), loaded all-at-once when digest is
+    //   ready. The parallel write pattern (all 16 words simultaneously
+    //   from sha3_hash_in[511:0]) prevents BRAM inference, but registers
+    //   are more efficient for this small size anyway.
     //   - out_wr_cnt : number of words loaded (set when digest arrives)
     //   - out_rd_ptr : increments per WB read
     // ================================================================
-    (* ram_style = "block" *) logic [31:0] out_fifo [0:OUT_DEPTH-1];
+    logic [31:0] out_fifo [0:OUT_DEPTH-1];
     logic [4:0]   out_wr_cnt;   // total loaded words (0..16)
     logic [4:0]   out_rd_ptr;   // next word to read
 
@@ -198,20 +200,12 @@ module sha3_wb
     wire [1:0] last_byte_num = msg_len[1:0]; // 0 → 0 bytes (full multiple), 1-3 → partial
 
     // ================================================================
-    // BRAM synchronous read port for input FIFO — write-first mode.
-    //
-    // When in_rd_ptr_nxt == in_wr_ptr in the same cycle as a push
-    // (i.e. the FIFO was empty and we are reading the address being
-    // written simultaneously), the standard Verilator/BRAM read-first
-    // behaviour would return the stale pre-write value.  The bypass
-    // mux forwards wb_dat_i directly in that case, giving write-first
-    // semantics.  Vivado infers this pattern as a write-first BRAM.
+    // BRAM synchronous read port for input FIFO.
+    //   Simplified to pure synchronous read for clean BRAM inference.
+    //   Read address is in_rd_ptr_nxt (pre-computed next pointer).
     // ================================================================
     always_ff @(posedge wb_clk_i) begin
-        if (in_push && (in_rd_ptr_nxt[IFW-2:0] == in_wr_ptr[IFW-2:0]))
-            in_fifo_rdata <= wb_dat_i;          // write-first bypass
-        else
-            in_fifo_rdata <= in_fifo[in_rd_ptr_nxt[IFW-2:0]];
+        in_fifo_rdata <= in_fifo[in_rd_ptr_nxt[IFW-2:0]];
     end
 
     // ================================================================
@@ -246,6 +240,7 @@ module sha3_wb
             msg_len_hi             <= '0;
             in_wr_ptr              <= '0;
             in_rd_ptr              <= '0;
+            in_data_available      <= 1'b0;
             in_head_valid          <= 1'b0;
             out_wr_cnt             <= '0;
             out_rd_ptr             <= '0;
@@ -276,6 +271,7 @@ module sha3_wb
                 state                  <= S_IDLE;
                 in_wr_ptr              <= '0;
                 in_rd_ptr              <= '0;
+                in_data_available      <= 1'b0;
                 in_head_valid          <= 1'b0;
                 out_wr_cnt             <= '0;
                 out_rd_ptr             <= '0;
@@ -286,10 +282,20 @@ module sha3_wb
                 err_fifo_overflow      <= 1'b0;
 
             end else begin
-                // Track BRAM prefetch validity every cycle (no special
-                // casing needed — in_empty_nxt already accounts for
-                // simultaneous push/pop this clock).
-                in_head_valid <= !in_empty_nxt;
+                // Pipeline BRAM prefetch validity to account for 1-cycle read latency:
+                // After consuming a word (in_pop), clear in_data_available to insert
+                // a bubble in the pipeline, giving BRAM time to fetch the next word.
+                // Cycle N: in_pop=1, consume current word, in_rd_ptr advances
+                // Cycle N+1: in_data_available=0 (bubble), BRAM reads new address
+                // Cycle N+2: in_data_available=1 if FIFO has data
+                // Cycle N+3: in_head_valid=1, new word ready in in_fifo_rdata
+                if (in_pop) begin
+                    in_data_available <= 1'b0;  // force pipeline bubble after pop
+                    in_head_valid     <= 1'b0;
+                end else begin
+                    in_data_available <= !in_empty_nxt;
+                    in_head_valid     <= in_data_available;
+                end
                 // ----------------------------------------------------
                 // FSM
                 // ----------------------------------------------------
