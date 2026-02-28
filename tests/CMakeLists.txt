@@ -61,6 +61,20 @@ add_verilator_test(tb_round round ${RTL_DIR}/sha3_pkg.sv ${RTL_DIR}/round.sv)
 add_sha3_wb_fifo_test(tb_sha3_wb_fifo8  8)
 add_sha3_wb_fifo_test(tb_sha3_wb_fifo64 64)
 add_verilator_test(tb_padder padder ${RTL_DIR}/sha3_pkg.sv ${RTL_DIR}/padder.sv)
+add_verilator_test(tb_f_permutation f_permutation
+    ${RTL_DIR}/sha3_pkg.sv
+    ${RTL_DIR}/rconst_lut.sv
+    ${RTL_DIR}/round.sv
+    ${RTL_DIR}/f_permutation.sv
+)
+add_verilator_test(tb_keccak keccak
+    ${RTL_DIR}/sha3_pkg.sv
+    ${RTL_DIR}/rconst_lut.sv
+    ${RTL_DIR}/round.sv
+    ${RTL_DIR}/f_permutation.sv
+    ${RTL_DIR}/padder.sv
+    ${RTL_DIR}/keccak.sv
+)
 
 # To add more tests, just add lines like:
 # add_verilator_test(tb_keccak_round keccak_round ${RTL_DIR}/keccak_round.sv)

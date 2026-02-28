@@ -49,6 +49,8 @@ module keccak (
     
     // Output extraction - take the appropriate number of bits based on variant
     // SHA3-224 -> 224 bits, SHA3-256 -> 256 bits, SHA3-384 -> 384 bits, SHA3-512 -> 512 bits
+    // The narrower slice is intentionally zero-extended into the MAX_RATE-wide port.
+    /* verilator lint_off WIDTHEXPAND */
     always_comb begin
         case (variant)
             SHA3_224: out = f_out[STATE_WIDTH-1:STATE_WIDTH-224];
@@ -58,6 +60,7 @@ module keccak (
             default:  out = f_out[STATE_WIDTH-1:STATE_WIDTH-512];
         endcase
     end
+    /* verilator lint_on WIDTHEXPAND */
     
     // State tracking
     always_ff @(posedge clk) begin
@@ -65,6 +68,17 @@ module keccak (
             state <= 1'b0;
         else if (is_last)
             state <= 1'b1;
+    end
+
+    // out_ready: latch high only when the *final* permutation completes.
+    // Mirrors the reference design's shift-register gate on (state & f_ack):
+    // f_out_ready pulses one cycle after the permutation finishes; we gate it
+    // with 'state' so intermediate blocks (multi-block messages) are ignored.
+    always_ff @(posedge clk) begin
+        if (reset)
+            out_ready <= 1'b0;
+        else if (f_out_ready & state)
+            out_ready <= 1'b1;
     end
     
     // Padder module instantiation
@@ -90,10 +104,9 @@ module keccak (
         .reset(reset),
         .in(padder_out),
         .in_ready(padder_out_ready),
-        .variant(variant),
         .ack(f_ack),
         .out(f_out),
-        .out_ready(out_ready)
+        .out_ready(f_out_ready)
     );
 
 endmodule : keccak

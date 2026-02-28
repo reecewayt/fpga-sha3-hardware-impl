@@ -18,15 +18,11 @@
 
 import sha3_pkg::*;
 
-// Note: This module is fully programmable - the variant is selected at runtime via variant input.
-// The controller must hold the variant steady during the entire permutation.
-
 module f_permutation (
     input  logic                    clk,
     input  logic                    reset,
     input  logic [MAX_RATE-1:0]     in,
     input  logic                    in_ready,
-    input  sha3_variant_t           variant,     // SHA-3 variant: 224/256/384/512
     output logic                    ack,
     output logic [STATE_WIDTH-1:0]  out,
     output logic                    out_ready
@@ -44,12 +40,14 @@ module f_permutation (
     assign accept = in_ready & (~calc);
     assign done = (rnd_idx == 5'd23);
     
-    // Round index counter: counts from 0 to 23 during calculation
+    // Round index counter.
+    // On the accept cycle rc[0] is applied (see rconst_lut instantiation below);
+    // the register is advanced to 1 so that the first calc cycle uses rc[1].
     always_ff @(posedge clk) begin
         if (reset)
             rnd_idx <= '0;
         else if (accept)
-            rnd_idx <= '0;  // Start at round 0 when accepting new input
+            rnd_idx <= 5'd1;  // rc[0] used this cycle; next cycle starts at rc[1]
         else if (calc)
             rnd_idx <= rnd_idx + 5'd1;
     end
@@ -77,23 +75,16 @@ module f_permutation (
             out_ready <= 1'b1;
     end
 
-    // XOR input with state (programmable rate support)
-    logic [STATE_WIDTH-1:0] round_in_xor;
+    // XOR input with state — padder always drives the correct rate bits into in[MAX_RATE-1:0]
+    assign round_in = accept ? {in ^ out[STATE_WIDTH-1:STATE_WIDTH-MAX_RATE], out[STATE_WIDTH-MAX_RATE-1:0]} : out;
 
-    always_comb begin 
-        unique case(variant)
-            SHA3_224: round_in_xor = {in ^ out[STATE_WIDTH-1:STATE_WIDTH-RATE_SHA3_224], out[STATE_WIDTH-RATE_SHA3_224-1:0]};
-            SHA3_256: round_in_xor = {in ^ out[STATE_WIDTH-1:STATE_WIDTH-RATE_SHA3_256], out[STATE_WIDTH-RATE_SHA3_256-1:0]};
-            SHA3_384: round_in_xor = {in ^ out[STATE_WIDTH-1:STATE_WIDTH-RATE_SHA3_384], out[STATE_WIDTH-RATE_SHA3_384-1:0]};
-            SHA3_512: round_in_xor = {in ^ out[STATE_WIDTH-1:STATE_WIDTH-RATE_SHA3_512], out[STATE_WIDTH-RATE_SHA3_512-1:0]};
-            default:  round_in_xor = {in ^ out[STATE_WIDTH-1:STATE_WIDTH-RATE_SHA3_512], out[STATE_WIDTH-RATE_SHA3_512-1:0]};
-        endcase
-    end
-    
-    assign round_in = accept ? round_in_xor : out;
+    // Force round-constant index 0 during the accept cycle so the XOR+round-0
+    // step always uses rc[0] regardless of the current rnd_idx register value.
+    logic [4:0] rc_idx;
+    assign rc_idx = accept ? 5'd0 : rnd_idx;
 
     rconst_lut rconst_lut_inst (
-        .rnd_idx(rnd_idx),
+        .rnd_idx(rc_idx),
         .rc_out(rc)
     );
 
