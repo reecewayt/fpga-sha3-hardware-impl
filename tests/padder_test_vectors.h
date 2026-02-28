@@ -20,11 +20,14 @@ struct PadderTestVector {
     std::string name;
     std::string description;
     SHA3Variant variant;
-    std::vector<uint32_t> input_words;  // Input data words
-    uint32_t num_full_words;            // Number of complete 32-bit words
-    uint32_t remaining_bytes;           // Remaining bytes (0-3) in last word
-    std::vector<uint32_t> expected_output;  // Expected padded output
-    uint32_t rate_words;                // Rate in 32-bit words
+    std::vector<uint32_t> input_words;        // Input data words
+    uint32_t num_full_words;                  // Number of complete 32-bit words
+    uint32_t remaining_bytes;                 // Remaining bytes (0-3) in last word
+    std::vector<uint32_t> expected_output;    // Expected final (padded) block
+    uint32_t rate_words;                      // Rate in 32-bit words
+    // Each entry is one full rate block emitted before the final padded block.
+    // Empty for single-block messages (the common case).
+    std::vector<std::vector<uint32_t>> intermediate_blocks = {};
 };
 
 static const std::vector<PadderTestVector> PADDER_TEST_VECTORS = {
@@ -451,6 +454,34 @@ static const std::vector<PadderTestVector> PADDER_TEST_VECTORS = {
          0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
          0xFFFFFFFF, 0xFFFFFFFF},
         18
+    },
+    {
+        // SHA3-512 rate = 18 words (72 bytes).
+        // Message = 20 words of 0xDEADBEEF (80 bytes, all full words).
+        // Words 0-17 fill the first rate block; the padder must emit it and
+        // return to S_FILL before accepting words 18-19.
+        // Intermediate block : 18 x 0xDEADBEEF
+        // Final padded block : [0xDEADBEEF, 0xDEADBEEF, 0x06000000, 0x00*14, 0x00000080]
+        "multiblock_SHA3_512",
+        "Two-block message: 20 full words across two SHA3-512 rate blocks (SHA3_512)",
+        SHA3Variant::SHA3_512,
+        // input_words: 20 x 0xDEADBEEF
+        {0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF,
+         0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF,
+         0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF},
+        20,   // num_full_words
+        0,    // remaining_bytes (all words are full)
+        // expected_output: final padded block
+        {0xDEADBEEF, 0xDEADBEEF, 0x06000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+         0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+         0x00000000, 0x00000080},
+        18,   // rate_words
+        // intermediate_blocks: one full rate block of raw data before the padded block
+        {{
+            0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF,
+            0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF,
+            0xDEADBEEF, 0xDEADBEEF
+        }}
     }
 };
 

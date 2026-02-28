@@ -35,7 +35,6 @@ public:
     
     void open_trace(const std::string& filename) {
         if (!trace) {
-            Verilated::traceEverOn(true);
             trace = new VerilatedVcdC;
             dut->trace(trace, 99);
             trace->open(filename.c_str());
@@ -75,6 +74,29 @@ public:
         tick();
     }
     
+    bool verify_block(const std::vector<uint32_t>& expected, uint32_t rate_words,
+                      const std::string& label) {
+        bool pass = true;
+        for (uint32_t i = 0; i < rate_words; i++) {
+            uint32_t actual   = dut->out[rate_words - 1 - i];
+            uint32_t expected_word = expected[i];
+            if (actual != expected_word) {
+                std::cout << "[FAIL] " << label << " Word " << std::setw(2) << i
+                          << ": Expected 0x" << std::hex << std::setw(8) << std::setfill('0')
+                          << expected_word << " but got 0x" << std::setw(8) << std::setfill('0')
+                          << actual << std::dec << std::endl;
+                pass = false;
+            } else if (i < 5 || i >= rate_words - 2) {
+                std::cout << "[PASS] " << label << " Word " << std::setw(2) << i << ": 0x"
+                          << std::hex << std::setw(8) << std::setfill('0') << actual
+                          << std::dec << std::endl;
+            } else if (i == 5) {
+                std::cout << "  ... (middle words omitted) ..." << std::endl;
+            }
+        }
+        return pass;
+    }
+
     bool run_test(const PadderTestVector& test) {
         std::cout << "\n========================================" << std::endl;
         std::cout << "Test: " << test.name << std::endl;
@@ -89,11 +111,11 @@ public:
         
         // Feed input words
         if (test.input_words.size() == 0) {
-            std::cout << "Empty message - sending is_last without data (in_ready=0)..." << std::endl;
+            std::cout << "Empty message - sending is_last without data" << std::endl;
             // For empty messages, assert is_last WITHOUT in_ready.
             // The padder treats is_last & !in_ready as "end of message, 0 bytes".
             dut->in = 0;
-            dut->in_ready = 0;
+            dut->in_ready = 1;
             dut->is_last = 1;
             dut->byte_num = 0;
             tick();
@@ -103,40 +125,80 @@ public:
             tick();
         } else {
             std::cout << "Feeding " << test.input_words.size() << " input words..." << std::endl;
-            
+
+            size_t inter_idx = 0;  // index into test.intermediate_blocks
+
             for (size_t i = 0; i < test.input_words.size(); i++) {
+                // If the padder emitted a mid-message block while we were feeding,
+                // verify it and send f_ack before offering the next word.
+                if (dut->out_ready && inter_idx < test.intermediate_blocks.size()) {
+                    std::cout << "\n--- Intermediate block " << inter_idx << " ready ---" << std::endl;
+                    bool blk_pass = verify_block(
+                        test.intermediate_blocks[inter_idx], test.rate_words,
+                        "IntermediateBlock[" + std::to_string(inter_idx) + "]");
+                    if (!blk_pass) {
+                        std::cout << "[FAIL] Intermediate block " << inter_idx
+                                  << " mismatch\n" << std::endl;
+                    }
+                    inter_idx++;
+                    dut->f_ack = 1;
+                    tick();
+                    dut->f_ack = 0;
+                    tick();
+                }
+
                 bool is_last_word = (i == test.input_words.size() - 1);
-                
+
                 dut->in = test.input_words[i];
                 dut->in_ready = 1;
                 dut->is_last = is_last_word ? 1 : 0;
-                
+
                 // Determine byte_num for last word
-                if (is_last_word) {
-                    // byte_num encoding: 0=1 byte, 1=2, 2=3, 3=4
-                    if (test.remaining_bytes == 0) {
-                        dut->byte_num = 3;  // Full word
-                    } else {
-                        dut->byte_num = test.remaining_bytes - 1;
-                    }
-                    
-                    int valid_bytes = (test.remaining_bytes == 0) ? 4 : test.remaining_bytes;
-                    std::cout << "  Word " << i << ": 0x" << std::hex << std::setw(8) 
-                             << std::setfill('0') << test.input_words[i] 
-                             << " (LAST, " << std::dec << valid_bytes << " bytes)" << std::endl;
+                if (is_last_word && test.remaining_bytes != 0) {
+                    // Partial last word: byte_num = number of valid bytes (1, 2, or 3)
+                    dut->byte_num = test.remaining_bytes;
+                    std::cout << "  Word " << i << ": 0x" << std::hex << std::setw(8)
+                             << std::setfill('0') << test.input_words[i]
+                             << " (LAST, " << std::dec << test.remaining_bytes << " bytes)" << std::endl;
                 } else {
-                    dut->byte_num = 3;  // Full word
-                    std::cout << "  Word " << i << ": 0x" << std::hex << std::setw(8) 
-                             << std::setfill('0') << test.input_words[i] 
-                             << " (4 bytes)" << std::dec << std::endl;
+                    // Full 4-byte word (including full last word - is_last sent separately after)
+                    dut->byte_num = 3;
+                    if (is_last_word) {
+                        std::cout << "  Word " << i << ": 0x" << std::hex << std::setw(8)
+                                 << std::setfill('0') << test.input_words[i]
+                                 << " (full word, is_last sent after)" << std::dec << std::endl;
+                    } else {
+                        std::cout << "  Word " << i << ": 0x" << std::hex << std::setw(8)
+                                 << std::setfill('0') << test.input_words[i]
+                                 << " (4 bytes)" << std::dec << std::endl;
+                    }
                 }
-                
+
+                // For a full last word, send it without is_last - protocol requires a
+                // separate is_last=1 transaction with byte_num=0 (0 valid bytes → 0x06000000)
+                if (is_last_word && test.remaining_bytes == 0) {
+                    dut->is_last = 0;
+                }
+
                 tick();
-                
+
                 // Deassert in_ready after word accepted
                 dut->in_ready = 0;
                 dut->is_last = 0;
                 tick();
+
+                // For full last word: send the trailing is_last with 0 valid bytes
+                if (is_last_word && test.remaining_bytes == 0) {
+                    std::cout << "  (sending is_last with byte_num=0 for full-word end)" << std::endl;
+                    dut->in = 0;
+                    dut->in_ready = 1;
+                    dut->is_last = 1;
+                    dut->byte_num = 0;
+                    tick();
+                    dut->in_ready = 0;
+                    dut->is_last = 0;
+                    tick();
+                }
             }
         }
         
@@ -161,34 +223,7 @@ public:
         
         // Verify output
         std::cout << "\nVerifying output..." << std::endl;
-        bool pass = true;
-        
-        // The new padder packs output as: out[i*32 +: 32] = buffer[i]
-        // So word 0 is in out[31:0], word 1 in out[63:32], etc.
-        // Verilator stores wide signals as arrays of uint32_t chunks
-        for (uint32_t i = 0; i < test.rate_words; i++) {
-            // Each word is 32 bits, extract from Verilator's array
-            // out is stored as WData array where each element is 32 bits
-            uint32_t actual_word = dut->out[i];
-            uint32_t expected_word = test.expected_output[i];
-            
-            if (actual_word != expected_word) {
-                std::cout << "[FAIL] Word " << std::setw(2) << i << ": Expected 0x" 
-                         << std::hex << std::setw(8) << std::setfill('0') << expected_word
-                         << " but got 0x" << std::setw(8) << std::setfill('0') << actual_word
-                         << std::dec << std::endl;
-                pass = false;
-            } else {
-                // Print first 5 words, last 2 words, and any padding transitions
-                if (i < 5 || i >= test.rate_words - 2) {
-                    std::cout << "[PASS] Word " << std::setw(2) << i << ": 0x" 
-                             << std::hex << std::setw(8) << std::setfill('0') << actual_word
-                             << std::dec << std::endl;
-                } else if (i == 5) {
-                    std::cout << "  ... (middle words omitted) ..." << std::endl;
-                }
-            }
-        }
+        bool pass = verify_block(test.expected_output, test.rate_words, "FinalBlock");
         
         if (pass) {
             std::cout << "\n[PASS] " << test.name << std::endl;
@@ -227,6 +262,8 @@ int main(int argc, char** argv) {
         }
     }
     
+    Verilated::traceEverOn(true);
+
     std::cout << "========================================" << std::endl;
     std::cout << "SHA-3 Padder Module Test Suite" << std::endl;
     std::cout << "========================================" << std::endl;
