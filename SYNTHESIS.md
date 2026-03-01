@@ -23,9 +23,11 @@ chmod +x run_synth.sh
 
 ## Adding New Modules
 
+### Simple Module (Non-Parameterized)
+
 Edit [synth_ooc.tcl](synth_ooc.tcl):
 
-1. **Add module to list** (line ~20):
+1. **Add module to list** (~line 20):
 ```tcl
 set MODULES [list \
     "rconst_lut" \
@@ -34,17 +36,102 @@ set MODULES [list \
 ]
 ```
 
-2. **Add dependencies if needed** (line ~26):
+2. **Add dependencies if needed** (~line 30):
 ```tcl
 array set MODULE_DEPS {
     your_new_module  {rtl/dependency1.sv rtl/dependency2.sv}
 }
 ```
 
-3. **Run synthesis**:
+3. **Add top module name mapping** (~line 45):
+```tcl
+array set MODULE_TOP_NAME {
+    your_new_module  "your_new_module"
+}
+```
+
+4. **Add empty generics entry** (~line 60):
+```tcl
+array set MODULE_GENERICS {
+    your_new_module  {}
+}
+```
+
+5. **Run synthesis**:
 ```bash
 ./run_synth.sh your_new_module
 ```
+
+**Note**: Steps 3-4 are technically optional (the script defaults to the module name and no generics), but adding them explicitly maintains consistency and makes the configuration clearer.
+
+### Parameterized Module with Multiple Variants
+
+For modules with parameters (like `sha3_wb` with different FIFO depths), you can create multiple synthesis variants:
+
+1. **Add all variants to module list** (~line 20):
+```tcl
+set MODULES [list \
+    "your_module-variant1" \
+    "your_module-variant2" \
+    "your_module-variant3" \
+]
+```
+
+2. **Add dependencies** (~line 30):
+```tcl
+array set MODULE_DEPS {
+    your_module-variant1  {}
+    your_module-variant2  {}
+    your_module-variant3  {}
+}
+```
+
+3. **Map variants to actual RTL top module** (~line 45):
+```tcl
+array set MODULE_TOP_NAME {
+    your_module-variant1  "your_module"
+    your_module-variant2  "your_module"
+    your_module-variant3  "your_module"
+}
+```
+
+4. **Specify generic parameters for each variant** (~line 60):
+```tcl
+array set MODULE_GENERICS {
+    your_module-variant1  {-generic PARAM1=8}
+    your_module-variant2  {-generic PARAM1=16}
+    your_module-variant3  {-generic PARAM1=32 -generic PARAM2=64}
+}
+```
+
+**Example**: The `sha3_wb` module demonstrates this pattern:
+```tcl
+# Five variants of sha3_wb with different FIFO depths
+set MODULES [list \
+    "sha3-wb-fifo8" \
+    "sha3-wb-fifo16" \
+    "sha3-wb-fifo32" \
+    "sha3-wb-fifo64" \
+]
+
+# All map to same RTL module
+array set MODULE_TOP_NAME {
+    sha3-wb-fifo8   "sha3_wb"
+    sha3-wb-fifo16  "sha3_wb"
+    sha3-wb-fifo32  "sha3_wb"
+    sha3-wb-fifo64  "sha3_wb"
+}
+
+# Each with different FIFO_DEPTH parameter
+array set MODULE_GENERICS {
+    sha3-wb-fifo8   {-generic FIFO_DEPTH=8}
+    sha3-wb-fifo16  {-generic FIFO_DEPTH=16}
+    sha3-wb-fifo32  {-generic FIFO_DEPTH=32}
+    sha3-wb-fifo64  {-generic FIFO_DEPTH=64}
+}
+```
+
+This allows comparing resource usage across different parameter values in a single synthesis run.
 
 ## Output Reports
 

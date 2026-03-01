@@ -20,13 +20,44 @@ set REPORTS_DIR "synth_reports"
 set MODULES [list \
     "rconst_lut" \
     "round" \
+    "sha3-wb-fifo8" \
+    "sha3-wb-fifo16" \
+    "sha3-wb-fifo32" \
+    "sha3-wb-fifo64" \
+
 ]
 
 # Module dependencies - add files that each module depends on
 # Format: module_name -> list of additional files
 array set MODULE_DEPS {
-    rconst_lut  {}
-    round       {}
+    rconst_lut      {}
+    round           {}
+    sha3-wb-fifo8   {}
+    sha3-wb-fifo16  {}
+    sha3-wb-fifo32  {}
+    sha3-wb-fifo64  {}
+}
+
+# Module top-level name mapping (for variants that share the same RTL)
+# Format: variant_name -> actual_top_module_name
+array set MODULE_TOP_NAME {
+    rconst_lut      "rconst_lut"
+    round           "round"
+    sha3-wb-fifo8   "sha3_wb"
+    sha3-wb-fifo16  "sha3_wb"
+    sha3-wb-fifo32  "sha3_wb"
+    sha3-wb-fifo64  "sha3_wb"
+}
+
+# Module generic parameters (for parameterized modules)
+# Format: variant_name -> list of "-generic NAME=VALUE" arguments
+array set MODULE_GENERICS {
+    rconst_lut      {}
+    round           {}
+    sha3-wb-fifo8   {-generic FIFO_DEPTH=8}
+    sha3-wb-fifo16  {-generic FIFO_DEPTH=16}
+    sha3-wb-fifo32  {-generic FIFO_DEPTH=32}
+    sha3-wb-fifo64  {-generic FIFO_DEPTH=64}
 }
 
 # Common files needed by all modules (package files, etc.)
@@ -45,9 +76,12 @@ proc create_reports_dir {dir} {
     }
 }
 
-proc synth_module {module_name part common_files deps reports_dir} {
+proc synth_module {module_name part common_files deps reports_dir top_name generics} {
     puts "\n========================================="
     puts "Synthesizing module: $module_name"
+    if {$generics ne ""} {
+        puts "Generics: $generics"
+    }
     puts "=========================================\n"
     
     # Read common files (package)
@@ -60,8 +94,12 @@ proc synth_module {module_name part common_files deps reports_dir} {
         }
     }
     
-    # Read module file
-    set module_file "rtl/${module_name}.sv"
+    # Read module file - use top_name to find the actual RTL file
+    set module_file "rtl/${top_name}.sv"
+    # Special handling for wishbone modules
+    if {![file exists $module_file] && [string match "sha3_wb*" $top_name]} {
+        set module_file "rtl/wb/sha3-wb.sv"
+    }
     if {[file exists $module_file]} {
         puts "Reading: $module_file"
         read_verilog -sv $module_file
@@ -81,8 +119,13 @@ proc synth_module {module_name part common_files deps reports_dir} {
     }
     
     # Synthesize out-of-context
-    puts "\nRunning synthesis for $module_name..."
-    if {[catch {synth_design -top $module_name -part $part -mode out_of_context} err]} {
+    puts "\nRunning synthesis for $module_name (top: $top_name)..."
+    set synth_cmd "synth_design -top $top_name -part $part -mode out_of_context"
+    if {$generics ne ""} {
+        append synth_cmd " $generics"
+    }
+    puts "Command: $synth_cmd"
+    if {[catch {eval $synth_cmd} err]} {
         puts "ERROR: Synthesis failed for $module_name"
         puts $err
         return 1
@@ -157,8 +200,22 @@ foreach module $modules_to_synth {
         set deps {}
     }
     
+    # Get top module name (defaults to module name if not specified)
+    if {[info exists MODULE_TOP_NAME($module)]} {
+        set top_name $MODULE_TOP_NAME($module)
+    } else {
+        set top_name $module
+    }
+    
+    # Get generics (empty if not specified)
+    if {[info exists MODULE_GENERICS($module)]} {
+        set generics $MODULE_GENERICS($module)
+    } else {
+        set generics ""
+    }
+    
     # Synthesize
-    set result [synth_module $module $FPGA_PART $COMMON_FILES $deps $REPORTS_DIR]
+    set result [synth_module $module $FPGA_PART $COMMON_FILES $deps $REPORTS_DIR $top_name $generics]
     
     if {$result == 0} {
         incr success_count
