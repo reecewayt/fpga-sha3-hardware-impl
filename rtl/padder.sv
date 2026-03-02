@@ -62,18 +62,18 @@ module padder (
         priority if (is_last) begin
             // last data word - insert 0x06 domain suffix after valid bytes
             unique case (byte_num)
-                2'b00: in_switch = 32'h0600_0000;
-                2'b01: in_switch = {in[31:24], 24'h06_0000};
-                2'b10: in_switch = {in[31:16], 16'h0600};
-                2'b11: in_switch = {in[31:8],  8'h06};
+                2'b00: in_switch = 32'h6000_0000;
+                2'b01: in_switch = {in[31:24], 24'h60_0000};
+                2'b10: in_switch = {in[31:16], 16'h6000};
+                2'b11: in_switch = {in[31:8],  8'h60};
             endcase
             // closing sentinel if this word will fill the buffer
-            in_switch[7] = in_switch[7] | next_buffer_full;
+            in_switch[0] = in_switch[7] | next_buffer_full;
         end
         else if (state == S_PAD) begin
             // zero fill, closing sentinel on last word
             in_switch    = 32'h0;
-            in_switch[7] = next_buffer_full;
+            in_switch[0] = next_buffer_full;
         end
         else begin
             // normal data word

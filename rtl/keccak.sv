@@ -54,10 +54,12 @@ module keccak (
                                         // need to reorganize bits in each byte for 
                                         // how computer usually represents data (msb in high position) vs how keccak expects it (msb in low position)
 
-    genvar w, b; 
+    // Bit mirror logic
+    logic [31:0]  in_switch;
+
+    genvar w, b, bb; 
     
     assign f_out_raw = f_out[1599:1599-511]; // Only the first 512 bits are relevant for output, depending on the variant
-    
     
     // State tracking
     always_ff @(posedge clk) begin
@@ -68,46 +70,32 @@ module keccak (
     end
 
 
-    // -------------------------------------------------------------------------
-    // Byte-swap within each 64-bit lane: padder_out_raw → padder_out_ld
-    //
-    // The padder emits bytes in big-endian order inside each 64-bit chunk —
-    // the first-arriving byte sits at the most-significant byte position.
-    // Keccak-f[1600] expects the first byte of each lane at the *least*
-    // significant byte position (little-endian lane layout).
-    //
-    // For 64-bit word w and byte index b (0 = LSB, 7 = MSB):
-    //   padder_out_ld[w*64 + b*8 +: 8]  ←  padder_out_raw[w*64 + (7-b)*8 +: 8]
-    //
-    // So byte 0 of word w (=bits [7:0]) gets byte 7 of word w from the source,
-    // byte 1 gets byte 6, … byte 7 gets byte 0.  This is a full big↔little
-    // endian conversion on each 64-bit lane.
-    //
-    // MAX_RATE = 1152 bits = 18 × 64-bit words  (covers all SHA-3 variants).
-    // -------------------------------------------------------------------------
+    // Bit mirror each byte at the input of the padder
     generate
-        for (w = 0; w < MAX_RATE/64; w++) begin : PADDER_BSWAP_WORD
-            for (b = 0; b < 8; b++) begin : PADDER_BSWAP_BYTE
-                assign padder_out_ld[w*64 + b*8 +: 8] =
-                       padder_out_raw[w*64 + (7-b)*8 +: 8];
+        for (b = 0; b < 4; b++) begin : IN_BSWAP_BYTE
+             for (bb = 0; bb < 8; bb++) begin : BYTE_BIT
+                // This is a full big↔little endian conversion on each 32-bit input word.
+                // The innermost loop iterates over bits within the byte, but since we're just reordering bytes, we can keep the bit order the same within each byte.
+                // So we can directly assign the byte without needing to reorder bits within the byte.
+                // This simplifies the code and avoids unnecessary complexity.
+                assign in_switch[8*b + bb] =
+                       in[8*b + (7-bb)];
             end
         end
     endgenerate
 
-    // -------------------------------------------------------------------------
-    // Byte-swap within each 64-bit lane: f_out_raw → out
-    //
-    // The same big↔little endian correction is applied to the 512-bit digest
-    // slice of the permutation output before presenting it on the output port.
-    //
-    // f_out_raw = f_out[1599:1088]  (top 512 bits of the 1600-bit state)
-    // 512 bits = 8 × 64-bit words.
-    // -------------------------------------------------------------------------
+    // Reverse the bit mirror for each byte to return to hexadecimal representation in the output
     generate
         for (w = 0; w < 8; w++) begin : FOUT_BSWAP_WORD
             for (b = 0; b < 8; b++) begin : FOUT_BSWAP_BYTE
-                assign out[w*64 + b*8 +: 8] =
-                       f_out_raw[w*64 + (7-b)*8 +: 8];
+                for (bb = 0; bb < 8; bb++) begin : BYTE_BIT
+                    // This is a full big↔little endian conversion on each 64-bit lane.
+                    // The innermost loop iterates over bits within the byte, but since we're just reordering bytes, we can keep the bit order the same within each byte.
+                    // So we can directly assign the byte without needing to reorder bits within the byte.
+                    // This simplifies the code and avoids unnecessary complexity.
+                    assign out[w*64 + 8*b + bb] =
+                           f_out_raw[w*64 + 8*b + (7-bb)];
+                end
             end
         end
     endgenerate
@@ -130,13 +118,13 @@ module keccak (
     padder padder_inst (
         .clk(clk),
         .reset(reset),
-        .in(in),
+        .in(in_switch),
         .in_ready(in_ready),
         .is_last(is_last),
         .byte_num(byte_num),
         .variant(variant),
         .buffer_full(buffer_full),
-        .out(padder_out_raw),
+        .out(padder_out_ld),
         .out_ready(padder_out_ready),
         .f_ack(f_ack)
     );
