@@ -39,7 +39,7 @@ module keccak (
                                     // state == 1: user will not send any data
     
     // Padder outputs
-    logic [MAX_RATE-1:0]     padder_out_ld;  // little endian representation
+    logic [MAX_RATE-1:0]    padder_out_ld;  // little endian representation
                                              // keccak is a little different, they put the msb in the low position, 
                                              // so (i.e.) bit 7 goes to bit 0 of each byte; essentially each byte is mirrored. 
 
@@ -100,7 +100,7 @@ module keccak (
         else if (f_out_ready & state)
             out_ready <= 1'b1;
     end
-    
+
     // Padder module instantiation
     // Note: The padder module needs to be ported to SystemVerilog separately
     // For now, this is a placeholder interface that matches the Verilog version
