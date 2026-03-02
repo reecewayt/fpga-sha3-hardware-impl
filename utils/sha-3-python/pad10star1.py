@@ -7,9 +7,9 @@ Implements the padding scheme from FIPS 202 Section 5.1:
     
 Where:
     - M is the original message
-    - d is the domain suffix (0x06 for SHA-3, which represents bits '01' LSB-first + '1' from pad10*1)
+    - d is the domain suffix (0x60 for SHA-3, which represents bits '01' LSB-first + '1' from pad10*1)
     - The padding ensures the result is a multiple of the rate in bytes
-    - The final 0x80 byte represents the trailing '1' bit of pad10*1
+    - The final 0x01 byte represents the trailing '1' bit of pad10*1
 
 The pad10*1 padding rule:
     - Append bits: 1 || 0^j || 1
@@ -23,14 +23,14 @@ For SHA-3 (domain suffix = 2 bits '01'):
 """
 
 
-def pad10star1(message, rate_bits, domain_suffix=0x06):
+def pad10star1(message, rate_bits, domain_suffix=0x60):
     """
     Apply SHA-3 pad10*1 padding to a message.
     
     Args:
         message: Input message as bytes
         rate_bits: Rate in bits (e.g., 1088 for SHA3-256)
-        domain_suffix: Domain separation byte (default 0x06 for SHA-3)
+        domain_suffix: Domain separation byte (default 0x60 for SHA-3)
                        This combines the 2-bit suffix '01' and first '1' from pad10*1
     
     Returns:
@@ -38,7 +38,7 @@ def pad10star1(message, rate_bits, domain_suffix=0x06):
     
     Examples:
         >>> # SHA3-256 with empty message
-        >>> pad10star1(b'', 1088) == b'\\x06' + b'\\x00' * 134 + b'\\x80'
+        >>> pad10star1(b'', 1088) == b'\\x60' + b'\\x00' * 134 + b'\\x01'
         True
         
         >>> # SHA3-256 with "abc"
@@ -47,9 +47,9 @@ def pad10star1(message, rate_bits, domain_suffix=0x06):
         True
         >>> result[:3] == b'abc'
         True
-        >>> result[3] == 0x06  # Domain suffix + first 1 bit
+        >>> result[3] == 0x60  # Domain suffix + first 1 bit
         True
-        >>> result[-1] == 0x80  # Final 1 bit
+        >>> result[-1] == 0x01  # Final 1 bit
         True
     """
     rate_bytes = rate_bits // 8
@@ -74,8 +74,8 @@ def pad10star1(message, rate_bits, domain_suffix=0x06):
     
     # Check if we can fit both domain suffix and final bit in one byte
     if padding_needed == 1:
-        # Domain suffix 0x06 and final bit 0x80 combine to 0x86
-        padded.append(domain_suffix | 0x80)
+        # Domain suffix 0x60 and final bit 0x01 combine to 0x61
+        padded.append(domain_suffix | 0x01)
     else:
         # Add domain suffix byte
         padded.append(domain_suffix)
@@ -84,8 +84,8 @@ def pad10star1(message, rate_bits, domain_suffix=0x06):
         for _ in range(padding_needed - 2):
             padded.append(0x00)
         
-        # Add final bit (0x80 = 0b10000000)
-        padded.append(0x80)
+        # Add final bit (0x01 = 0b00000001)
+        padded.append(0x01)
     
     # Verify result is correct length
     assert len(padded) % rate_bytes == 0, f"Padding failed: {len(padded)} not multiple of {rate_bytes}"
@@ -120,7 +120,7 @@ def pad_for_variant(message, variant):
         raise ValueError(f"Invalid variant: {variant}. Must be one of: 224, 256, 384, 512")
     
     rate_bits = rates[variant]
-    return pad10star1(message, rate_bits, domain_suffix=0x06)
+    return pad10star1(message, rate_bits, domain_suffix=0x60)
 
 
 def print_padded_bytes(padded, max_show=16):
@@ -142,70 +142,70 @@ def test_small_rates():
     
     # Test 1: Tiny rate - 4 bytes (32 bits)
     print("\nTest A: Empty message, 32-bit rate (4 bytes)")
-    padded = pad10star1(b'', 32, domain_suffix=0x06)
+    padded = pad10star1(b'', 32, domain_suffix=0x60)
     print(f"  Rate: 32 bits = 4 bytes")
     print_padded_bytes(padded)
-    print(f"  Padding: 0x06 + 0x00 + 0x00 + 0x80")
+    print(f"  Padding: 0x60 + 0x00 + 0x00 + 0x01")
     assert len(padded) == 4
-    assert padded == b'\x06\x00\x00\x80'
+    assert padded == b'\x60\x00\x00\x01'
     print("  ✓ PASS")
     
     # Test 2: Single byte message with small rate
     print("\nTest B: Single byte 'A', 32-bit rate (4 bytes)")
-    padded = pad10star1(b'A', 32, domain_suffix=0x06)
+    padded = pad10star1(b'A', 32, domain_suffix=0x60)
     print(f"  Rate: 32 bits = 4 bytes")
     print(f"  Message: 0x{ord('A'):02X} = 'A'")
     print_padded_bytes(padded)
-    print(f"  Layout: 0x41 (A) | 0x06 (pad) | 0x00 | 0x80 (end)")
+    print(f"  Layout: 0x41 (A) | 0x60 (pad) | 0x00 | 0x01 (end)")
     assert len(padded) == 4
-    assert padded == b'A\x06\x00\x80'
+    assert padded == b'A\x60\x00\x01'
     print("  ✓ PASS")
     
     # Test 3: Three bytes, exact fit minus 1
     print("\nTest C: 'ABC' (3 bytes), 32-bit rate (4 bytes)")
-    padded = pad10star1(b'ABC', 32, domain_suffix=0x06)
+    padded = pad10star1(b'ABC', 32, domain_suffix=0x60)
     print(f"  Rate: 32 bits = 4 bytes")
     print(f"  Message: 'ABC' = 0x41 0x42 0x43")
     print_padded_bytes(padded)
-    print(f"  Layout: 0x41 0x42 0x43 | 0x86 (combined suffix+end)")
+    print(f"  Layout: 0x41 0x42 0x43 | 0x61 (combined suffix+end)")
     assert len(padded) == 4
-    assert padded == b'ABC\x86'
-    print("  ✓ PASS - Note: 0x86 = 0x06 | 0x80 (all padding in one byte)")
+    assert padded == b'ABC\x61'
+    print("  ✓ PASS - Note: 0x61 = 0x60 | 0x01 (all padding in one byte)")
     
     # Test 4: Exact rate boundary
     print("\nTest D: 'ABCD' (4 bytes), 32-bit rate (4 bytes)")
-    padded = pad10star1(b'ABCD', 32, domain_suffix=0x06)
+    padded = pad10star1(b'ABCD', 32, domain_suffix=0x60)
     print(f"  Rate: 32 bits = 4 bytes")
     print(f"  Message: 'ABCD' = 0x41 0x42 0x43 0x44")
     print_padded_bytes(padded)
-    print(f"  Layout: [0x41 0x42 0x43 0x44] [0x06 0x00 0x00 0x80]")
+    print(f"  Layout: [0x41 0x42 0x43 0x44] [0x60 0x00 0x00 0x01]")
     assert len(padded) == 8
-    assert padded == b'ABCD\x06\x00\x00\x80'
+    assert padded == b'ABCD\x60\x00\x00\x01'
     print("  ✓ PASS - Needs full padding block")
     
     # Test 5: 8-byte rate
     print("\nTest E: 'Hello' (5 bytes), 64-bit rate (8 bytes)")
-    padded = pad10star1(b'Hello', 64, domain_suffix=0x06)
+    padded = pad10star1(b'Hello', 64, domain_suffix=0x60)
     print(f"  Rate: 64 bits = 8 bytes")
     print(f"  Message: 'Hello' = 0x{b'Hello'.hex()}")
     print_padded_bytes(padded)
-    print(f"  Layout: [Hello] 0x06 0x00 0x80")
+    print(f"  Layout: [Hello] 0x60 0x00 0x01")
     assert len(padded) == 8
-    assert padded == b'Hello\x06\x00\x80'
+    assert padded == b'Hello\x60\x00\x01'
     print("  ✓ PASS")
     
     # Test 6: Show bit-level detail
     print("\nTest F: Bit-level analysis of 'X' with 24-bit rate (3 bytes)")
     message = b'X'
-    padded = pad10star1(message, 24, domain_suffix=0x06)
+    padded = pad10star1(message, 24, domain_suffix=0x60)
     print(f"  Rate: 24 bits = 3 bytes")
     print(f"\n  Byte-by-byte breakdown:")
     print(f"    Byte 0: 0x{padded[0]:02X} = 0b{padded[0]:08b} = 'X'")
     print(f"    Byte 1: 0x{padded[1]:02X} = 0b{padded[1]:08b} = domain suffix")
-    print(f"            LSB-first: bit0=1, bit1=1, bit2=0 → '110' → '01' + '1'")
+    print(f"            0x60 = 0b01100000: bit5=1, bit6=1, rest 0")
     print(f"    Byte 2: 0x{padded[2]:02X} = 0b{padded[2]:08b} = final padding bit")
-    print(f"            bit7=1 (MSB) represents the trailing '1' of pad10*1")
-    assert padded == b'X\x06\x80'
+    print(f"            bit0=1 (LSB) represents the trailing '1' of pad10*1")
+    assert padded == b'X\x60\x01'
     print("  ✓ PASS")
 
 
@@ -222,8 +222,8 @@ def test_standard_sha3_variants():
     print(f"  Output: {len(padded)} bytes (expected: 136)")
     print(f"  First: 0x{padded[0]:02X} (domain), Last: 0x{padded[-1]:02X} (end)")
     assert len(padded) == 136
-    assert padded[0] == 0x06
-    assert padded[-1] == 0x80
+    assert padded[0] == 0x60
+    assert padded[-1] == 0x01
     print("  ✓ PASS")
     
     # Test 2: "abc", SHA3-256
@@ -234,8 +234,8 @@ def test_standard_sha3_variants():
     print(f"  Start: {padded[:4].hex()}, End: {padded[-2:].hex()}")
     assert len(padded) == 136
     assert padded[:3] == b'abc'
-    assert padded[3] == 0x06
-    assert padded[-1] == 0x80
+    assert padded[3] == 0x60
+    assert padded[-1] == 0x01
     print("  ✓ PASS")
     
     # Test 3: Boundary case - one byte short of rate
@@ -244,9 +244,9 @@ def test_standard_sha3_variants():
     padded = pad10star1(message, 576)
     print(f"  Input: 71 bytes")
     print(f"  Output: {len(padded)} bytes (expected: 72)")
-    print(f"  Last byte: 0x{padded[-1]:02X} (expected: 0x86 = combined)")
+    print(f"  Last byte: 0x{padded[-1]:02X} (expected: 0x61 = combined)")
     assert len(padded) == 72
-    assert padded[-1] == 0x86  # Combined suffix and final bit
+    assert padded[-1] == 0x61  # Combined suffix and final bit
     print("  ✓ PASS")
     
     # Test 4: Exact rate boundary - need full additional block
@@ -257,8 +257,8 @@ def test_standard_sha3_variants():
     print(f"  Output: {len(padded)} bytes (expected: 144)")
     print(f"  Padding block: 0x{padded[72]:02X} ... 0x{padded[-1]:02X}")
     assert len(padded) == 144
-    assert padded[72] == 0x06
-    assert padded[-1] == 0x80
+    assert padded[72] == 0x60
+    assert padded[-1] == 0x01
     print("  ✓ PASS")
     
     # Test 5: All variants with same message
@@ -288,9 +288,9 @@ def test_edge_cases():
     padded = pad10star1(b'X', 16)  # 16 bits = 2 bytes
     print(f"  Input: 'X' (1 byte)")
     print(f"  Output: {padded.hex()}")
-    print(f"  Expected: 58 86 (X + combined padding)")
+    print(f"  Expected: 58 61 (X + combined padding)")
     assert len(padded) == 2
-    assert padded == b'X\x86'
+    assert padded == b'X\x61'
     print("  ✓ PASS")
     
     # Test 2: Very long message
@@ -302,7 +302,7 @@ def test_edge_cases():
     print(f"  Blocks: {len(padded) // 136} × 136-byte blocks")
     assert len(padded) % 136 == 0
     assert padded[:200] == long_msg
-    assert padded[-1] == 0x80
+    assert padded[-1] == 0x01
     print("  ✓ PASS")
     
     # Test 3: All possible single-byte messages (compact test)
@@ -312,8 +312,8 @@ def test_edge_cases():
         padded = pad10star1(msg, 32)
         assert len(padded) == 4
         assert padded[0] == byte_val
-        assert padded[1] == 0x06
-        assert padded[-1] == 0x80
+        assert padded[1] == 0x60
+        assert padded[-1] == 0x01
     print(f"  Tested bytes: 0x00, 0x42, 0xFF")
     print("  ✓ PASS")
     
@@ -322,8 +322,8 @@ def test_edge_cases():
     padded = pad10star1(b'test', 1088, domain_suffix=0x1F)
     print(f"  Input: 'test' with SHAKE domain (0x1F)")
     print(f"  Output: {padded[:5].hex()} ... {padded[-2:].hex()}")
-    assert padded[4] == 0x1F  # SHAKE uses 0x1F instead of 0x06
-    assert padded[-1] == 0x80
+    assert padded[4] == 0x1F  # SHAKE uses 0x1F instead of 0x60
+    assert padded[-1] == 0x01
     print("  ✓ PASS - Different domain suffix works")
 
 

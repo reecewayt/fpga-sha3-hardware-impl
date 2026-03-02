@@ -110,6 +110,9 @@ public:
         tick();
         
         // Feed input words
+        // Track how many intermediate blocks have been verified across all phases.
+        size_t inter_idx = 0;
+
         if (test.input_words.size() == 0) {
             std::cout << "Empty message - sending is_last without data" << std::endl;
             // For empty messages, assert is_last WITHOUT in_ready.
@@ -125,8 +128,6 @@ public:
             tick();
         } else {
             std::cout << "Feeding " << test.input_words.size() << " input words..." << std::endl;
-
-            size_t inter_idx = 0;  // index into test.intermediate_blocks
 
             for (size_t i = 0; i < test.input_words.size(); i++) {
                 // If the padder emitted a mid-message block while we were feeding,
@@ -187,8 +188,28 @@ public:
                 dut->is_last = 0;
                 tick();
 
-                // For full last word: send the trailing is_last with 0 valid bytes
+                // For full last word: send the trailing is_last with 0 valid bytes.
+                // IMPORTANT: the padder may have just filled its rate buffer on this
+                // word and asserted out_ready.  It cannot accept the trailing is_last
+                // while out_ready is high (it's waiting for f_ack).  Drain first.
                 if (is_last_word && test.remaining_bytes == 0) {
+                    // Drain any intermediate block that became ready on the last word.
+                    while (dut->out_ready && inter_idx < test.intermediate_blocks.size()) {
+                        std::cout << "\n--- Intermediate block " << inter_idx
+                                  << " ready (pre-is_last drain) ---" << std::endl;
+                        bool blk_pass = verify_block(
+                            test.intermediate_blocks[inter_idx], test.rate_words,
+                            "IntermediateBlock[" + std::to_string(inter_idx) + "]");
+                        if (!blk_pass) {
+                            std::cout << "[FAIL] Intermediate block " << inter_idx
+                                      << " mismatch" << std::endl;
+                        }
+                        inter_idx++;
+                        dut->f_ack = 1;
+                        tick();
+                        dut->f_ack = 0;
+                        tick();
+                    }
                     std::cout << "  (sending is_last with byte_num=0 for full-word end)" << std::endl;
                     dut->in = 0;
                     dut->in_ready = 1;
@@ -202,10 +223,39 @@ public:
             }
         }
         
-        // Wait for out_ready signal (padder enters DONE state)
+        // Drain any intermediate blocks that became ready after the feeding loop.
+        // This handles the case where the padder emits a full block on or after
+        // the last input word, which the per-word check above would have missed.
         int max_cycles = 500;
+        while (inter_idx < test.intermediate_blocks.size()) {
+            int drain_cycles = 0;
+            std::cout << "Waiting for intermediate block " << inter_idx << "..." << std::endl;
+            while (!dut->out_ready && drain_cycles < max_cycles) {
+                tick();
+                drain_cycles++;
+            }
+            if (drain_cycles >= max_cycles) {
+                std::cout << "[FAIL] Timeout waiting for intermediate block " << inter_idx << std::endl;
+                return false;
+            }
+            std::cout << "\n--- Intermediate block " << inter_idx << " ready ---" << std::endl;
+            bool blk_pass = verify_block(
+                test.intermediate_blocks[inter_idx], test.rate_words,
+                "IntermediateBlock[" + std::to_string(inter_idx) + "]");
+            if (!blk_pass) {
+                std::cout << "[FAIL] Intermediate block " << inter_idx
+                          << " mismatch" << std::endl;
+            }
+            inter_idx++;
+            dut->f_ack = 1;
+            tick();
+            dut->f_ack = 0;
+            tick();
+        }
+
+        // Wait for the final padded block.
         int cycles = 0;
-        std::cout << "Waiting for out_ready..." << std::endl;
+        std::cout << "Waiting for final out_ready..." << std::endl;
         
         while (!dut->out_ready && cycles < max_cycles) {
             tick();
@@ -217,12 +267,12 @@ public:
             return false;
         }
         
-        std::cout << "Padding complete after " << cycles << " cycles" << std::endl;
+        std::cout << "Padding complete after " << cycles << " additional cycles" << std::endl;
         std::cout << "out_ready=" << (int)dut->out_ready 
                   << ", buffer_full=" << (int)dut->buffer_full << std::endl;
         
-        // Verify output
-        std::cout << "\nVerifying output..." << std::endl;
+        // Verify final padded block
+        std::cout << "\nVerifying final block..." << std::endl;
         bool pass = verify_block(test.expected_output, test.rate_words, "FinalBlock");
         
         if (pass) {

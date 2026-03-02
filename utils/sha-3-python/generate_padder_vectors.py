@@ -59,6 +59,16 @@ TEST_CASES = [
         'message': b'\xFF' * 72,  # Exactly SHA3-512 rate
         'description': 'Exactly SHA3-512 rate (72 bytes)'
     },
+    {
+        'name': 'large_multiblock',
+        # 290 bytes = 72 full words + 2 remaining bytes (0xA55A repeating pattern)
+        # SHA3-224 (144 B/block) → 3 blocks: 2 intermediate + 1 final
+        # SHA3-256 (136 B/block) → 3 blocks: 2 intermediate + 1 final
+        # SHA3-384 (104 B/block) → 3 blocks: 2 intermediate + 1 final
+        # SHA3-512 ( 72 B/block) → 5 blocks: 4 intermediate + 1 final
+        'message': b'\xA5\x5A' * 145,
+        'description': 'Large multiblock message (290 bytes, >=2 intermediate blocks for all variants)'
+    },
 ]
 
 # SHA-3 variant parameters
@@ -96,7 +106,7 @@ def generate_test_vector(test_case, variant_name, variant_info):
     rate_words = variant_info['rate_words']
     
     # Apply SHA-3 padding using the verified pad10star1 function
-    padded = pad10star1(message, rate_bits, domain_suffix=0x06)
+    padded = pad10star1(message, rate_bits)  # uses current default domain_suffix
     
     # Convert to words
     padded_words = message_to_words(padded)
@@ -109,6 +119,19 @@ def generate_test_vector(test_case, variant_name, variant_info):
     # Convert message to input words
     input_words = message_to_words(message)
     
+    # Split padded output into rate-sized blocks.
+    # All blocks except the last are "intermediate" (full raw-data blocks that
+    # the padder emits before the final padded block).
+    num_blocks = len(padded_words) // rate_words
+    assert len(padded_words) % rate_words == 0, (
+        f"Padded length {len(padded_words)} not a multiple of rate_words {rate_words}"
+    )
+    intermediate_blocks = [
+        padded_words[i * rate_words : (i + 1) * rate_words]
+        for i in range(num_blocks - 1)
+    ]
+    final_block = padded_words[-rate_words:]
+    
     return {
         'test_name': test_case['name'],
         'variant': variant_name,
@@ -119,7 +142,8 @@ def generate_test_vector(test_case, variant_name, variant_info):
         'num_full_words': num_full_words,
         'remaining_bytes': remaining_bytes,
         'input_words': input_words,
-        'expected_output': padded_words[:rate_words],  # Ensure exactly rate_words
+        'expected_output': final_block,
+        'intermediate_blocks': intermediate_blocks,
         'rate_words': rate_words,
     }
 
@@ -155,6 +179,9 @@ struct PadderTestVector {
     uint32_t remaining_bytes;           // Remaining bytes (0-3) in last word
     std::vector<uint32_t> expected_output;  // Expected padded output
     uint32_t rate_words;                // Rate in 32-bit words
+    // Each entry is one full rate block emitted before the final padded block.
+    // Empty for single-block messages (the common case).
+    std::vector<std::vector<uint32_t>> intermediate_blocks = {};
 };
 
 """)
@@ -197,9 +224,31 @@ struct PadderTestVector {
                 f.write(f"0x{word:08X}")
             f.write("},\n")
             
-            f.write(f"        {vec['rate_words']}\n")
+            f.write(f"        {vec['rate_words']}")
+
+            # Emit intermediate_blocks if present
+            if vec['intermediate_blocks']:
+                f.write(",\n        // intermediate_blocks: full rate blocks before the final padded block\n")
+                f.write("        {\n")
+                for bi, block in enumerate(vec['intermediate_blocks']):
+                    f.write("            {")
+                    for j, word in enumerate(block):
+                        if j > 0:
+                            if j % 8 == 0:
+                                f.write(",\n             ")
+                            else:
+                                f.write(", ")
+                        f.write(f"0x{word:08X}")
+                    f.write("}")
+                    if bi < len(vec['intermediate_blocks']) - 1:
+                        f.write(",")
+                    f.write("\n")
+                f.write("        }\n")
+            else:
+                f.write("\n")
+
             f.write("    }")
-            
+
             if i < len(all_vectors) - 1:
                 f.write(",\n")
             else:
