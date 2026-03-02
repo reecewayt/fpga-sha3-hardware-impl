@@ -26,6 +26,8 @@ module padder (
     state_t       state;
     logic [31:0]  in_switch;
     logic         next_buffer_full;
+    logic [5:0]   additional_shifts;
+    logic [5:0]   curr_additional_shifts;
 
     // --- buffer_full: one hot position depends on rate ---
     always_comb begin
@@ -49,7 +51,19 @@ module padder (
         endcase
     end
 
-    assign out_ready         = buffer_full;
+    // The variant determine how many 64-bit shifts to do in order to move initial bytes
+    // to the first position of the shift register.
+    always_comb begin
+        unique case (variant)
+            SHA3_224: additional_shifts = 0; 
+            SHA3_256: additional_shifts = 1; 
+            SHA3_384: additional_shifts = 5; 
+            SHA3_512: additional_shifts = 9; 
+            default:  additional_shifts = 9; 
+        endcase
+    end
+
+    assign out_ready         = buffer_full & (additional_shifts == curr_additional_shifts);
     assign accept_user_input = (state == S_FILL) & in_ready & ~buffer_full;
     assign update_shift      = (accept_user_input | ((state == S_PAD) & ~buffer_full)) & ~done;
 
@@ -62,18 +76,18 @@ module padder (
         priority if (is_last) begin
             // last data word - insert 0x06 domain suffix after valid bytes
             unique case (byte_num)
-                2'b00: in_switch = 32'h0600_0000;
-                2'b01: in_switch = {in[31:24], 24'h06_0000};
-                2'b10: in_switch = {in[31:16], 16'h0600};
-                2'b11: in_switch = {in[31:8],  8'h06};
+                2'b00: in_switch = 32'h6000_0000;
+                2'b01: in_switch = {in[31:24], 24'h60_0000};
+                2'b10: in_switch = {in[31:16], 16'h6000};
+                2'b11: in_switch = {in[31:8],  8'h60};
             endcase
             // closing sentinel if this word will fill the buffer
-            in_switch[7] = in_switch[7] | next_buffer_full;
+            in_switch[0] = in_switch[0] | next_buffer_full;
         end
         else if (state == S_PAD) begin
             // zero fill, closing sentinel on last word
             in_switch    = 32'h0;
-            in_switch[7] = next_buffer_full;
+            in_switch[0] = next_buffer_full;
         end
         else begin
             // normal data word
@@ -83,10 +97,17 @@ module padder (
 
     // --- shift register ---
     always_ff @(posedge clk) begin
-        if (reset)
+        if (reset) begin
             out <= '0;
-        else if (update_shift) // also shift when buffer_full to collect last word
+            curr_additional_shifts <= '0;
+        end else if (update_shift) begin// also shift when buffer_full to collect last word
             out <= {out[MAX_RATE-33:0], in_switch};
+        end else if (curr_additional_shifts != additional_shifts & buffer_full) begin
+            out <= {out[MAX_RATE-65:0], 64'h0};
+            curr_additional_shifts <= curr_additional_shifts + 1;
+        end else if (curr_additional_shifts == additional_shifts) begin
+            curr_additional_shifts <= '0;
+        end
     end
 
     // --- one hot fill counter ---

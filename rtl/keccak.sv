@@ -54,7 +54,9 @@ module keccak (
                                         // need to reorganize bits in each byte for 
                                         // how computer usually represents data (msb in high position) vs how keccak expects it (msb in low position)
 
-    genvar w, b; 
+    genvar w, b, bb; 
+
+    logic [31:0]  in_switch; // This is a temporary variable to hold the byte-swapped input before feeding it to the padder.
     
     assign f_out_raw = f_out[1599:1599-511]; // Only the first 512 bits are relevant for output, depending on the variant
     
@@ -67,7 +69,7 @@ module keccak (
             state <= 1'b1;
     end
 
-
+    /*
     // -------------------------------------------------------------------------
     // Byte-swap within each 64-bit lane: padder_out_raw → padder_out_ld
     //
@@ -88,12 +90,34 @@ module keccak (
     generate
         for (w = 0; w < MAX_RATE/64; w++) begin : PADDER_BSWAP_WORD
             for (b = 0; b < 8; b++) begin : PADDER_BSWAP_BYTE
-                assign padder_out_ld[w*64 + b*8 +: 8] =
-                       padder_out_raw[w*64 + (7-b)*8 +: 8];
+                for (bb = 0; bb < 8; bb++) begin : BYTE_BIT
+                    // This is a full big↔little endian conversion on each 64-bit lane.
+                    // The innermost loop iterates over bits within the byte, but since we're just reordering bytes, we can keep the bit order the same within each byte.
+                    // So we can directly assign the byte without needing to reorder bits within the byte.
+                    // This simplifies the code and avoids unnecessary complexity.
+                    assign padder_out_ld[w*64 + 8*b + bb] =
+                           padder_out_raw[w*64 + 8*b + (7-bb)];
+                end
+            end
+        end
+    endgenerate
+    */
+
+    // Bit mirror each byte at the input of the padder
+    generate
+        for (b = 0; b < 4; b++) begin : IN_BSWAP_BYTE
+             for (bb = 0; bb < 8; bb++) begin : BYTE_BIT
+                // This is a full big↔little endian conversion on each 32-bit input word.
+                // The innermost loop iterates over bits within the byte, but since we're just reordering bytes, we can keep the bit order the same within each byte.
+                // So we can directly assign the byte without needing to reorder bits within the byte.
+                // This simplifies the code and avoids unnecessary complexity.
+                assign in_switch[8*b + bb] =
+                       in[8*b + (7-bb)];
             end
         end
     endgenerate
 
+    
     // -------------------------------------------------------------------------
     // Byte-swap within each 64-bit lane: f_out_raw → out
     //
@@ -106,8 +130,14 @@ module keccak (
     generate
         for (w = 0; w < 8; w++) begin : FOUT_BSWAP_WORD
             for (b = 0; b < 8; b++) begin : FOUT_BSWAP_BYTE
-                assign out[w*64 + b*8 +: 8] =
-                       f_out_raw[w*64 + (7-b)*8 +: 8];
+                for (bb = 0; bb < 8; bb++) begin : BYTE_BIT
+                    // This is a full big↔little endian conversion on each 64-bit lane.
+                    // The innermost loop iterates over bits within the byte, but since we're just reordering bytes, we can keep the bit order the same within each byte.
+                    // So we can directly assign the byte without needing to reorder bits within the byte.
+                    // This simplifies the code and avoids unnecessary complexity.
+                    assign out[w*64 + 8*b + bb] =
+                           f_out_raw[w*64 + 8*b + (7-bb)];
+                end
             end
         end
     endgenerate
@@ -130,13 +160,13 @@ module keccak (
     padder padder_inst (
         .clk(clk),
         .reset(reset),
-        .in(in),
+        .in(in_switch),
         .in_ready(in_ready),
         .is_last(is_last),
         .byte_num(byte_num),
         .variant(variant),
         .buffer_full(buffer_full),
-        .out(padder_out_raw),
+        .out(padder_out_ld),
         .out_ready(padder_out_ready),
         .f_ack(f_ack)
     );
