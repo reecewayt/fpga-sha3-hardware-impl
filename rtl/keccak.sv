@@ -39,20 +39,23 @@ module keccak (
                                     // state == 1: user will not send any data
     
     // Padder outputs
-    logic [MAX_RATE-1:0]     padder_out_ld;  // little endian representation
+    logic [MAX_RATE-1:0]    padder_out_ld;  // little endian representation
                                              // keccak is a little different, they put the msb in the low position, 
                                              // so (i.e.) bit 7 goes to bit 0 of each byte; essentially each byte is mirrored. 
     logic [MAX_RATE-1:0]    padder_out_raw;  // before reorder bytes
-
-    logic                    padder_out_ready;
+    logic                   padder_out_ready;
     
+    // Shift outputs
+    logic [MAX_RATE-1:0]    shift_out;
+    logic                   shift_out_ready;
+
     // F-permutation interface
-    logic                    f_ack;
-    logic [STATE_WIDTH-1:0]  f_out;
-    logic                    f_out_ready;
-    logic [511:0]     f_out_raw;        // before reorder bytes
-                                        // need to reorganize bits in each byte for 
-                                        // how computer usually represents data (msb in high position) vs how keccak expects it (msb in low position)
+    logic                   f_ack;
+    logic [STATE_WIDTH-1:0] f_out;
+    logic                   f_out_ready;
+    logic [511:0]           f_out_raw;      // before reorder bytes
+                                            // need to reorganize bits in each byte for 
+                                            // how computer usually represents data (msb in high position) vs how keccak expects it (msb in low position)
 
     // Bit mirror logic
     logic [31:0]  in_switch;
@@ -100,7 +103,6 @@ module keccak (
         end
     endgenerate
 
-
     // out_ready: latch high only when the *final* permutation completes.
     // Mirrors the reference design's shift-register gate on (state & f_ack):
     // f_out_ready pulses one cycle after the permutation finishes; we gate it
@@ -111,7 +113,7 @@ module keccak (
         else if (f_out_ready & state)
             out_ready <= 1'b1;
     end
-    
+
     // Padder module instantiation
     // Note: The padder module needs to be ported to SystemVerilog separately
     // For now, this is a placeholder interface that matches the Verilog version
@@ -128,13 +130,26 @@ module keccak (
         .out_ready(padder_out_ready),
         .f_ack(f_ack)
     );
+
+    // Shift module instantiation
+    // Note: The shift module needs to be ported to SystemVerilog separately
+    // For now, this is a placeholder interface that matches the Verilog version
+    sha3_shift sha3_shift_inst (
+        .clk(clk),
+        .reset(reset),
+        .variant(variant),
+        .in(padder_out_ld),
+        .in_ready(padder_out_ready),
+        .out(shift_out),
+        .out_ready(shift_out_ready)
+    );
     
     // F-permutation (Keccak-f[1600]) instantiation
     f_permutation f_permutation_inst (
         .clk(clk),
         .reset(reset),
-        .in(padder_out_ld),
-        .in_ready(padder_out_ready),
+        .in(shift_out),
+        .in_ready(shift_out_ready),
         .ack(f_ack),
         .out(f_out),
         .out_ready(f_out_ready)
