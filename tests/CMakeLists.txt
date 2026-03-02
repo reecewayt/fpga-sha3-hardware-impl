@@ -74,7 +74,12 @@ add_verilator_test(tb_keccak keccak
     ${RTL_DIR}/round.sv
     ${RTL_DIR}/f_permutation.sv
     ${RTL_DIR}/padder.sv
+    ${RTL_DIR}/sha3_shift.sv
     ${RTL_DIR}/keccak.sv
+)
+add_verilator_test(tb_sha3_shift sha3_shift
+    ${RTL_DIR}/sha3_pkg.sv
+    ${RTL_DIR}/sha3_shift.sv
 )
 
 # To add more tests, just add lines like:
