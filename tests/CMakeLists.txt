@@ -58,6 +58,7 @@ endfunction()
 
 add_verilator_test(tb_rconst_lut rconst_lut ${RTL_DIR}/rconst_lut.sv)
 add_verilator_test(tb_round round ${RTL_DIR}/sha3_pkg.sv ${RTL_DIR}/round.sv)
+add_verilator_test(tb_round_abc round ${RTL_DIR}/sha3_pkg.sv ${RTL_DIR}/round.sv)
 add_sha3_wb_fifo_test(tb_sha3_wb_fifo8  8)
 add_sha3_wb_fifo_test(tb_sha3_wb_fifo64 64)
 add_verilator_test(tb_padder padder ${RTL_DIR}/sha3_pkg.sv ${RTL_DIR}/padder.sv)

@@ -42,15 +42,18 @@ module keccak (
     logic [MAX_RATE-1:0]     padder_out_ld;  // little endian representation
                                              // keccak is a little different, they put the msb in the low position, 
                                              // so (i.e.) bit 7 goes to bit 0 of each byte; essentially each byte is mirrored. 
-    logic [MAX_RATE-1:0]    padder_out_raw;  // before reorder bytes
 
-    logic                    padder_out_ready;
+    logic                   padder_out_ready; // indicates when the padder has valid output to feed into the F-permutation
+
+    
+    logic [MAX_RATE-1:0]    f_in;           // input to F-permutation, which is the output of the padder << shift logic
+
     
     // F-permutation interface
     logic                    f_ack;
     logic [STATE_WIDTH-1:0]  f_out;
     logic                    f_out_ready;
-    logic [511:0]     f_out_raw;        // before reorder bytes
+    logic [511:0]            f_out_raw;        // before reorder bytes
                                         // need to reorganize bits in each byte for 
                                         // how computer usually represents data (msb in high position) vs how keccak expects it (msb in low position)
 
@@ -73,14 +76,7 @@ module keccak (
     // Bit mirror each byte at the input of the padder
     generate
         for (b = 0; b < 4; b++) begin : IN_BSWAP_BYTE
-             for (bb = 0; bb < 8; bb++) begin : BYTE_BIT
-                // This is a full big↔little endian conversion on each 32-bit input word.
-                // The innermost loop iterates over bits within the byte, but since we're just reordering bytes, we can keep the bit order the same within each byte.
-                // So we can directly assign the byte without needing to reorder bits within the byte.
-                // This simplifies the code and avoids unnecessary complexity.
-                assign in_switch[8*b + bb] =
-                       in[8*b + (7-bb)];
-            end
+            assign in_switch[8*b+: 8] = {in[8*b], in[8*b+1], in[8*b+2], in[8*b+3], in[8*b+4], in[8*b+5], in[8*b+6], in[8*b+7]};
         end
     endgenerate
 
@@ -128,16 +124,26 @@ module keccak (
         .out_ready(padder_out_ready),
         .f_ack(f_ack)
     );
+
+    // this put rate in msb position of buffer
+    always_comb begin
+        unique case(variant) 
+            SHA3_224: f_in = padder_out_ld << 0; 
+            SHA3_256: f_in = padder_out_ld << 64; 
+            SHA3_384: f_in = padder_out_ld << 320; 
+            SHA3_512: f_in = padder_out_ld << 576; 
+        endcase 
+    end
     
     // F-permutation (Keccak-f[1600]) instantiation
     f_permutation f_permutation_inst (
         .clk(clk),
         .reset(reset),
-        .in(padder_out_ld),
+        .in(f_in),
         .in_ready(padder_out_ready),
         .ack(f_ack),
         .out(f_out),
         .out_ready(f_out_ready)
     );
 
-endmodule : keccak
+endmodule : keccak 
