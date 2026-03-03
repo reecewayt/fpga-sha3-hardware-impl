@@ -60,7 +60,7 @@ module keccak (
     // Bit mirror logic
     logic [63:0]  in_switch;
 
-    genvar w, b, bb; 
+    genvar w, b; 
     
     assign f_out_raw = f_out[1599:1599-511]; // Only the first 512 bits are relevant for output, depending on the variant
     
@@ -72,15 +72,7 @@ module keccak (
             state <= 1'b1;
     end
 
-
-    // // Bit mirror each byte at the input of the padder
-    // generate
-    //     for (b = 0; b < 4; b++) begin : IN_BSWAP_BYTE
-    //         assign in_switch[8*b+: 8] = {in[8*b], in[8*b+1], in[8*b+2], in[8*b+3], in[8*b+4], in[8*b+5], in[8*b+6], in[8*b+7]};
-    //     end
-    // endgenerate
-
-    // switch byte order 
+    // Switch byte order 
     assign in_switch = {in[7:0], in[15:8], in[23:16], in[31:24],
                         in[39:32], in[47:40], in[55:48], in[63:56]};
 
@@ -88,18 +80,15 @@ module keccak (
     generate
         for (w = 0; w < 8; w++) begin : FOUT_BSWAP_WORD
             for (b = 0; b < 8; b++) begin : FOUT_BSWAP_BYTE
-                for (bb = 0; bb < 8; bb++) begin : BYTE_BIT
-                    // This is a full big↔little endian conversion on each 64-bit lane.
-                    // The innermost loop iterates over bits within the byte, but since we're just reordering bytes, we can keep the bit order the same within each byte.
-                    // So we can directly assign the byte without needing to reorder bits within the byte.
-                    // This simplifies the code and avoids unnecessary complexity.
-                    assign out[w*64 + 8*b + bb] =
-                           f_out_raw[w*64 + 8*b + (7-bb)];
-                end
+                // This is a full big↔little endian conversion on each 64-bit lane.
+                // The innermost loop iterates over bits within the byte, but since we're just reordering bytes, we can keep the bit order the same within each byte.
+                // So we can directly assign the byte without needing to reorder bits within the byte.
+                // This simplifies the code and avoids unnecessary complexity.
+                assign out[w*64 + 8*b +: 8] =
+                        f_out_raw[w*64 + 8*(7-b) +: 8];
             end
         end
     endgenerate
-
 
     // out_ready: latch high only when the *final* permutation completes.
     // Mirrors the reference design's shift-register gate on (state & f_ack):
@@ -129,7 +118,7 @@ module keccak (
         .f_ack(f_ack)
     );
 
-    // this put rate in msb position of buffer
+    // Place rate into correct position for F-permutation input based on variant
     always_comb begin
         unique case(variant) 
             SHA3_224: f_in = padder_out_ld << 0; 
