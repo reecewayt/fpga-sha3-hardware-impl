@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-/* "is_last" == 0 means byte number is 8, no matter what value "byte_num" is. */
+/* "is_last" == 0 means byte number is 8 (full 64-bit word), no matter what value "byte_num" is. */
 /* if "in_ready" == 0, then "is_last" should be 0. */
 /* the user switch to next "in" only if "ack" == 1. */
 
@@ -24,10 +24,10 @@ import sha3_pkg::*;
 module keccak (
     input  logic                    clk,
     input  logic                    reset,
-    input  logic [31:0]             in,
+    input  logic [63:0]             in,
     input  logic                    in_ready,
     input  logic                    is_last,
-    input  logic [1:0]              byte_num,
+    input  logic [2:0]              byte_num,
     input  sha3_variant_t           variant,        // SHA-3 variant selection
     output logic                    buffer_full,
     output logic [511:0]     out,                  // Max output size (for SHA3-224)
@@ -58,7 +58,7 @@ module keccak (
                                         // how computer usually represents data (msb in high position) vs how keccak expects it (msb in low position)
 
     // Bit mirror logic
-    logic [31:0]  in_switch;
+    logic [63:0]  in_switch;
 
     genvar w, b, bb; 
     
@@ -73,12 +73,16 @@ module keccak (
     end
 
 
-    // Bit mirror each byte at the input of the padder
-    generate
-        for (b = 0; b < 4; b++) begin : IN_BSWAP_BYTE
-            assign in_switch[8*b+: 8] = {in[8*b], in[8*b+1], in[8*b+2], in[8*b+3], in[8*b+4], in[8*b+5], in[8*b+6], in[8*b+7]};
-        end
-    endgenerate
+    // // Bit mirror each byte at the input of the padder
+    // generate
+    //     for (b = 0; b < 4; b++) begin : IN_BSWAP_BYTE
+    //         assign in_switch[8*b+: 8] = {in[8*b], in[8*b+1], in[8*b+2], in[8*b+3], in[8*b+4], in[8*b+5], in[8*b+6], in[8*b+7]};
+    //     end
+    // endgenerate
+
+    // switch byte order 
+    assign in_switch = {in[7:0], in[15:8], in[23:16], in[31:24],
+                        in[39:32], in[47:40], in[55:48], in[63:56]};
 
     // Reverse the bit mirror for each byte to return to hexadecimal representation in the output
     generate

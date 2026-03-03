@@ -23,13 +23,13 @@ struct SHA3NISTVector {
     std::string  name;
     std::string  description;
     SHA3Variant  variant;
-    // Input message encoded as big-endian 32-bit words (same convention as
-    // padder_test_vectors.h).  The most-significant byte of each word is the
-    // chronologically first byte.  E.g. "abc" (0x61 0x62 0x63) is stored as
-    // {0x61626300} with num_full_words=0, remaining_bytes=3.
-    std::vector<uint32_t> input_words;
-    uint32_t num_full_words;   // number of complete (4-byte) words
-    uint32_t remaining_bytes;  // 0-3 valid bytes in the last word
+    // Input message encoded as big-endian 64-bit words.  The most-significant
+    // byte of each word is the chronologically first byte.  E.g. "abc"
+    // (0x61 0x62 0x63) is stored as {0x6162630000000000ULL} with
+    // num_full_words=0, remaining_bytes=3.
+    std::vector<uint64_t> input_words;
+    uint32_t num_full_words;   // number of complete (8-byte) words
+    uint32_t remaining_bytes;  // 0-7 valid bytes in the last word
     // Expected digest as big-endian 32-bit words.
     // SHA3-224 → 7 words, SHA3-256 → 8 words,
     // SHA3-384 → 12 words, SHA3-512 → 16 words.
@@ -55,7 +55,7 @@ static const std::vector<SHA3NISTVector> SHA3_NIST_VECTORS = {
         "sha3_256_abc",
         "SHA3-256 of \"abc\" (NIST FIPS 202 Appendix A)",
         SHA3Variant::SHA3_256,
-        /*input_words=*/ {0x61626300},   // 'a','b','c', pad byte unused
+        /*input_words=*/ {0x6162630000000000ULL},   // 'a','b','c' in MSB, rest unused
         /*num_full_words=*/ 0,
         /*remaining_bytes=*/ 3,
         // 3a985da7 4fe225b2 045c172d 6bd390bd 855f086e 3e9d525b 46bfe245 11431532

@@ -51,7 +51,7 @@ public:
         dut           = new Vkeccak;
         dut->clk      = 0;
         dut->reset    = 1;
-        dut->in       = 0;
+        dut->in       = 0ULL;
         dut->in_ready = 0;
         dut->is_last  = 0;
         dut->byte_num = 0;
@@ -131,27 +131,27 @@ public:
             dut->in_ready = 1;
 
             if (is_last_word && tv.remaining_bytes != 0) {
-                // Partial last word: byte_num = number of valid bytes.
+                // Partial last word: byte_num = number of valid bytes (1-7).
                 dut->is_last  = 1;
                 dut->byte_num = tv.remaining_bytes;
                 std::cout << "    word[" << i << "] = 0x"
-                          << std::hex << std::setw(8) << std::setfill('0')
+                          << std::hex << std::setw(16) << std::setfill('0')
                           << tv.input_words[i]
                           << " (LAST, " << std::dec << tv.remaining_bytes << " bytes)\n";
             } else if (is_last_word && tv.remaining_bytes == 0) {
-                // Full last word: send WITHOUT is_last; follow up with a
-                // separate is_last transaction (byte_num = 0) afterwards.
+                // Full last 64-bit word: send WITHOUT is_last; follow up with
+                // a separate is_last transaction (byte_num = 0) afterwards.
                 dut->is_last  = 0;
-                dut->byte_num = 3;
+                dut->byte_num = 7;
                 std::cout << "    word[" << i << "] = 0x"
-                          << std::hex << std::setw(8) << std::setfill('0')
+                          << std::hex << std::setw(16) << std::setfill('0')
                           << tv.input_words[i]
                           << " (full word, is_last follows)\n";
             } else {
                 dut->is_last  = 0;
-                dut->byte_num = 3;
+                dut->byte_num = 7;
                 std::cout << "    word[" << i << "] = 0x"
-                          << std::hex << std::setw(8) << std::setfill('0')
+                          << std::hex << std::setw(16) << std::setfill('0')
                           << tv.input_words[i] << std::dec << "\n";
             }
 
