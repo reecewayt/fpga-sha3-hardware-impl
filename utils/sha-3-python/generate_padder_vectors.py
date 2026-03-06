@@ -299,11 +299,14 @@ struct PadderTestVector {
             # Input words (64-bit) - needs double braces for std::vector in aggregate init
             f.write("        {\n")
             if vec['input_words_64']:
-                f.write("            {\n")
+                # Only use inner braces for multiple elements
+                if len(vec['input_words_64']) > 1:
+                    f.write("            {\n")
                 for j, word in enumerate(vec['input_words_64']):
                     comma = "," if j < len(vec['input_words_64']) - 1 else ""
                     f.write(f"                {format_word64_hex(word)}{comma}\n")
-                f.write("            }\n")
+                if len(vec['input_words_64']) > 1:
+                    f.write("            }\n")
             else:
                 # Empty input_words_64 - use single braces only
                 f.write("            \n")
@@ -314,13 +317,16 @@ struct PadderTestVector {
             
             # Expected output (64-bit) - needs double braces for std::vector in aggregate init
             f.write("        {\n")
-            f.write("            {\n")
+            # Only use inner braces for multiple elements
+            if len(vec['expected_output']) > 1:
+                f.write("            {\n")
             for j, word in enumerate(vec['expected_output']):
                 f.write(f"                {format_word64_hex(word)}")
                 if j < len(vec['expected_output']) - 1:
                     f.write(",")
                 f.write("\n")
-            f.write("            }\n")
+            if len(vec['expected_output']) > 1:
+                f.write("            }\n")
             f.write("        },\n")
             
             f.write(f"        {vec['rate_words_64']}")

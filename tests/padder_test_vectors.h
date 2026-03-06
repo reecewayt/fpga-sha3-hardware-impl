@@ -183,9 +183,7 @@ static const std::vector<PadderTestVector> PADDER_TEST_VECTORS = {
         "Single byte 0x42 (SHA3_224)",
         SHA3Variant::SHA3_224,
         {
-            {
                 0x0000000000000042ULL
-            }
         },
         0,
         1,
@@ -222,9 +220,7 @@ static const std::vector<PadderTestVector> PADDER_TEST_VECTORS = {
         "Single byte 0x42 (SHA3_256)",
         SHA3Variant::SHA3_256,
         {
-            {
                 0x0000000000000042ULL
-            }
         },
         0,
         1,
@@ -260,9 +256,7 @@ static const std::vector<PadderTestVector> PADDER_TEST_VECTORS = {
         "Single byte 0x42 (SHA3_384)",
         SHA3Variant::SHA3_384,
         {
-            {
                 0x0000000000000042ULL
-            }
         },
         0,
         1,
@@ -294,9 +288,7 @@ static const std::vector<PadderTestVector> PADDER_TEST_VECTORS = {
         "Single byte 0x42 (SHA3_512)",
         SHA3Variant::SHA3_512,
         {
-            {
                 0x0000000000000042ULL
-            }
         },
         0,
         1,
@@ -324,9 +316,7 @@ static const std::vector<PadderTestVector> PADDER_TEST_VECTORS = {
         "Classic abc test vector (SHA3_224)",
         SHA3Variant::SHA3_224,
         {
-            {
                 0x0000000000636261ULL
-            }
         },
         0,
         3,
@@ -363,9 +353,7 @@ static const std::vector<PadderTestVector> PADDER_TEST_VECTORS = {
         "Classic abc test vector (SHA3_256)",
         SHA3Variant::SHA3_256,
         {
-            {
                 0x0000000000636261ULL
-            }
         },
         0,
         3,
@@ -401,9 +389,7 @@ static const std::vector<PadderTestVector> PADDER_TEST_VECTORS = {
         "Classic abc test vector (SHA3_384)",
         SHA3Variant::SHA3_384,
         {
-            {
                 0x0000000000636261ULL
-            }
         },
         0,
         3,
@@ -435,9 +421,7 @@ static const std::vector<PadderTestVector> PADDER_TEST_VECTORS = {
         "Classic abc test vector (SHA3_512)",
         SHA3Variant::SHA3_512,
         {
-            {
                 0x0000000000636261ULL
-            }
         },
         0,
         3,
@@ -465,9 +449,7 @@ static const std::vector<PadderTestVector> PADDER_TEST_VECTORS = {
         "Exactly 4 bytes (SHA3_224)",
         SHA3Variant::SHA3_224,
         {
-            {
                 0x00000000DDCCBBAAULL
-            }
         },
         0,
         4,
@@ -504,9 +486,7 @@ static const std::vector<PadderTestVector> PADDER_TEST_VECTORS = {
         "Exactly 4 bytes (SHA3_256)",
         SHA3Variant::SHA3_256,
         {
-            {
                 0x00000000DDCCBBAAULL
-            }
         },
         0,
         4,
@@ -542,9 +522,7 @@ static const std::vector<PadderTestVector> PADDER_TEST_VECTORS = {
         "Exactly 4 bytes (SHA3_384)",
         SHA3Variant::SHA3_384,
         {
-            {
                 0x00000000DDCCBBAAULL
-            }
         },
         0,
         4,
@@ -576,9 +554,7 @@ static const std::vector<PadderTestVector> PADDER_TEST_VECTORS = {
         "Exactly 4 bytes (SHA3_512)",
         SHA3Variant::SHA3_512,
         {
-            {
                 0x00000000DDCCBBAAULL
-            }
         },
         0,
         4,
@@ -606,9 +582,7 @@ static const std::vector<PadderTestVector> PADDER_TEST_VECTORS = {
         "Eight bytes (one full 64-bit word) (SHA3_224)",
         SHA3Variant::SHA3_224,
         {
-            {
                 0x3332314F4C4C4548ULL
-            }
         },
         1,
         0,
@@ -645,9 +619,7 @@ static const std::vector<PadderTestVector> PADDER_TEST_VECTORS = {
         "Eight bytes (one full 64-bit word) (SHA3_256)",
         SHA3Variant::SHA3_256,
         {
-            {
                 0x3332314F4C4C4548ULL
-            }
         },
         1,
         0,
@@ -683,9 +655,7 @@ static const std::vector<PadderTestVector> PADDER_TEST_VECTORS = {
         "Eight bytes (one full 64-bit word) (SHA3_384)",
         SHA3Variant::SHA3_384,
         {
-            {
                 0x3332314F4C4C4548ULL
-            }
         },
         1,
         0,
@@ -717,9 +687,7 @@ static const std::vector<PadderTestVector> PADDER_TEST_VECTORS = {
         "Eight bytes (one full 64-bit word) (SHA3_512)",
         SHA3Variant::SHA3_512,
         {
-            {
                 0x3332314F4C4C4548ULL
-            }
         },
         1,
         0,

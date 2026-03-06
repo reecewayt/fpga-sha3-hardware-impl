@@ -4,7 +4,6 @@
 
 #include <iostream>
 #include <iomanip>
-#include <sstream>
 #include <vector>
 #include <string>
 #include "Vkeccak.h"
@@ -177,28 +176,34 @@ public:
 
     // -----------------------------------------------------------------------
     // Compare the DUT digest output against expected words.
-    // The keccak module places the N-bit digest in out[N-1:0] (zero-extended
-    // into the wider MAX_RATE port).  In Verilator's word array:
-    //   digest word i  →  dut->out[digest_words - 1 - i]
+    // The keccak module outputs 512 bits on out[511:0].
+    // In Verilator: dut->out[15] = bits [511:480], dut->out[0] = bits [31:0]
+    // The hash digest is placed at the MSB end for all variants:
+    //   SHA3-224: out[511:224] contains digest (8 words at indices 15..8)
+    //   SHA3-256: out[511:256] contains digest (8 words at indices 15..8)
+    //   SHA3-384: out[511:0] contains digest (16 words, all indices)
+    //   SHA3-512: out[511:0] contains digest (16 words, all indices)
+    // Correct indexing: digest_word[i] = dut->out[15 - i]
     // -----------------------------------------------------------------------
     bool verify_digest(const SHA3NISTVector& tv) {
         uint32_t dw   = digest_words(tv.variant);
         bool     pass = true;
 
-        std::cout << "\n  Expected digest (" << variant_name(tv.variant) << "):\n  ";
+        std::cout << "\n  Expected digest (" << variant_name(tv.variant) << "):\n    ";
         for (uint32_t i = 0; i < dw; i++)
             std::cout << std::hex << std::setw(8) << std::setfill('0')
                       << tv.expected_digest[i] << " ";
-        std::cout << "\n  Got:\n  ";
+        std::cout << "\n  Got:\n    ";
 
         for (uint32_t i = 0; i < dw; i++) {
-            uint32_t actual = dut->out[dw - 1 - i];
+            uint32_t actual = dut->out[15 - i];
             std::cout << std::hex << std::setw(8) << std::setfill('0') << actual << " ";
         }
         std::cout << "\n";
 
+        // Compare using correct MSB-first indexing
         for (uint32_t i = 0; i < dw; i++) {
-            uint32_t actual   = dut->out[dw - 1 - i];
+            uint32_t actual   = dut->out[15 - i];
             uint32_t expected = tv.expected_digest[i];
             if (actual != expected) {
                 std::cout << "  [MISMATCH] word[" << i << "]: expected 0x"
@@ -286,7 +291,9 @@ int main(int argc, char** argv) {
     if (enable_trace) tb.open_trace(trace_file);
 
     int passed = 0, failed = 0;
+    int test_num = 0;
     for (const auto& tv : SHA3_NIST_VECTORS) {
+        test_num++;
         if (tb.run_test(tv)) passed++;
         else                 failed++;
     }
@@ -297,6 +304,7 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "\n========================================\n";
+    std::cout << std::dec;  // Ensure decimal output
     std::cout << "Passed: " << passed << " / " << SHA3_NIST_VECTORS.size() << "\n";
     std::cout << "Failed: " << failed << " / " << SHA3_NIST_VECTORS.size() << "\n";
 
