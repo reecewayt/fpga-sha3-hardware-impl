@@ -240,6 +240,9 @@ def main():
         ("abc", "\"abc\" (NIST FIPS 202 Appendix A)", b"abc"),
         ("single_byte", "single byte 0x42", b"\x42"),
         ("password123", "\"password123\"", b"password123"),
+        ("long_145A", "145 bytes of 'A' (2 blocks for SHA3-224)", b"A" * 145),
+        ("long_296pattern", "296 bytes of repeating pattern (for multi-block testing)", b"ABCDEFGH" * 37),
+        ("heavy_10blk", "1000 bytes - heavy multi-block test for all variants", b"TESTDATA" * 125),
     ]
     
     # Add custom messages if provided
@@ -255,6 +258,7 @@ def main():
     # Generate test vectors for all variants and messages
     test_vectors = []
     for variant in VARIANTS:
+        # First, add standard messages (same across all variants)
         for msg_key, msg_desc, msg_bytes in all_messages:
             # Extract variant number (224, 256, etc.)
             variant_num = variant.name.split('_')[1]
@@ -262,6 +266,16 @@ def main():
             description = f"SHA3-{variant_num} of {msg_desc}"
             tv = generate_test_vector(name, description, variant, msg_bytes)
             test_vectors.append(tv)
+        
+        # Add variant-specific test: exactly 3 blocks (2 full blocks + 1 padding block)
+        # Message length = 2 * rate_bytes exactly
+        variant_num = variant.name.split('_')[1]
+        exact_3blk_bytes = 2 * variant.rate_words * 8
+        exact_3blk_msg = b"X" * exact_3blk_bytes
+        name = f"sha3_{variant_num}_exact_3blk"
+        description = f"Exactly 3 blocks: {exact_3blk_bytes} bytes (2 full blocks + padding)"
+        tv = generate_test_vector(name, description, variant, exact_3blk_msg)
+        test_vectors.append(tv)
     
     # Generate and write the header file
     header_content = generate_header(test_vectors, args.output)
@@ -269,9 +283,10 @@ def main():
     try:
         with open(args.output, 'w') as f:
             f.write(header_content)
+        num_msgs = len(all_messages) + 1  # +1 for variant-specific exact_3blk
         print(f"✓ Generated {len(test_vectors)} test vectors in {args.output}")
         print(f"  - {len(VARIANTS)} SHA3 variants")
-        print(f"  - {len(all_messages)} message types per variant")
+        print(f"  - {num_msgs} message types per variant")
     except IOError as e:
         print(f"✗ Error writing to {args.output}: {e}", file=sys.stderr)
         sys.exit(1)

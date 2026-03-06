@@ -23,12 +23,14 @@ module f_permutation (
     input  logic                    reset,
     input  logic [MAX_RATE-1:0]     in,
     input  logic                    in_ready,
+    input  logic                    more_blks,
+    output logic                    ack_more_blks,
     output logic                    ack,
     output logic [STATE_WIDTH-1:0]  out,
     output logic                    out_ready
 );
 
-    logic [4:0]            rnd_idx;      // round index (0 to 23)
+    logic [4:0]             rnd_idx;      // round index (0 to 23)
     logic [STATE_WIDTH-1:0] round_in;
     logic [STATE_WIDTH-1:0] round_out;
     logic [LANE_WIDTH-1:0]  rc;         // round constant
@@ -39,27 +41,44 @@ module f_permutation (
 
     assign accept = in_ready & (~calc);
     assign done = (rnd_idx == 5'd23);
+
+     // Acknowledge more blocks pending if in done state and ack_more_blks is not already set
     
     // Round index counter.
     // On the accept cycle rc[0] is applied (see rconst_lut instantiation below);
     // the register is advanced to 1 so that the first calc cycle uses rc[1].
+    // If more blocks are coming after done, reset to 0 for next block.
     always_ff @(posedge clk) begin
-        if (reset)
+
+        // Acknowledge more blocks pending if in done state
+        if (rnd_idx == 5'd21) 
+            ack_more_blks <= 1'b1;
+        else 
+            ack_more_blks <= 1'b0;
+
+        if (reset) begin
             rnd_idx <= '0;
-        else if (accept)
+            ack_more_blks <= 1'b0;
+        end else if (accept)
             rnd_idx <= 5'd1;  // rc[0] used this cycle; next cycle starts at rc[1]
         else if (calc)
             rnd_idx <= rnd_idx + 5'd1;
+        else if (done & more_blks) begin
+            rnd_idx <= 5'd0;  // Reset for next block
+            ack_more_blks <= 1'b1; // Pulse ack to indicate done and more blocks pending
+        end
     end
     
+    
     // Calculation control: active from accept until round 23 completes
+    // Always reset calc on done; this creates an accept window if more blocks pending.
     always_ff @(posedge clk) begin
         if (reset)
             calc <= 1'b0;
         else if (accept)
             calc <= 1'b1;  // Start calculation
         else if (done)
-            calc <= 1'b0;  // Stop after round 23
+            calc <= 1'b0;  // Always stop to allow next accept window
     end
     
     assign update = calc | accept;
@@ -71,7 +90,7 @@ module f_permutation (
             out_ready <= 1'b0;
         else if (accept)
             out_ready <= 1'b0;
-        else if (done) // Set ready after completing round 23
+        else if (done & ~more_blks & ~in_ready)  // Only set ready when no more blocks pending
             out_ready <= 1'b1;
     end
 

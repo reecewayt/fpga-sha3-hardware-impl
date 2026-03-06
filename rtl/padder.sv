@@ -11,6 +11,9 @@ module padder (
     output logic                buffer_full,
     output logic [MAX_RATE-1:0] out,
     output logic                out_ready,
+    output logic                done,
+    output logic                more_blks,
+    input  logic                ack_more_blks,
     input  logic                f_ack
 );
 
@@ -22,7 +25,7 @@ module padder (
     logic [17:0]  i;
     logic         accept_user_input;
     logic         update_shift;
-    logic         done;
+    logic         more_blks_ff;
     state_t       state;
     logic [63:0]  in_switch;
     logic         next_buffer_full;
@@ -119,5 +122,19 @@ module padder (
         else if ((state == S_PAD) & out_ready)
             done <= 1'b1;
     end
+
+    // --- more_blks flag ---
+    // Latch high when first data is accepted into padder.
+    // Latch low only when padder is done and f_permutation acknowledges (f_ack pulse).
+    always_ff @(posedge clk) begin
+        if (reset)
+            more_blks_ff <= 1'b0;
+        else if (ack_more_blks & done)
+            more_blks_ff <= 1'b0;
+        else if (in_ready)
+            more_blks_ff <= 1'b1;
+    end
+
+    assign more_blks = more_blks_ff;
 
 endmodule
