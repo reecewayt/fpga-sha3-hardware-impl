@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
 """
-Generate test vectors for the padder module.
+Generate test vectors for the padder module (64-bit word format).
 
-This script generates comprehensive test cases for the SHA-3 padder, including:
-- Different message lengths (short, medium, near-boundary)
-- All SHA-3 variants (224, 256, 384, 512)
-- Partial byte handling
-- Edge cases (empty message, full blocks)
+This script generates comprehensive test cases for the SHA-3 padder using
+64-bit little-endian words to match the f_permutation module format.
 
-Output format is a C++ header file with test vectors.
+IMPORTANT: Data Flow and Byte Ordering
+========================================
+The padder operates AFTER keccak.sv's byte-swap operation:
+
+User Input → keccak.sv byte swap → Padder → f_permutation
+
+Example: 'abc' message
+  - User provides:    0x61 0x62 0x63 (big-endian bytes)
+  - After byte swap:  bytes at LE positions [7:0]='a', [15:8]='b', [23:16]='c'
+  - Padder adds 0x06: 0x0000000006636261 (little-endian lane)
+
+Output format is a C++ header file with 64-bit test vectors in little-endian format.
 """
 
 import sys
@@ -37,12 +45,12 @@ TEST_CASES = [
     {
         'name': 'four_bytes',
         'message': b'\xAA\xBB\xCC\xDD',
-        'description': 'Exactly 4 bytes (one full word)'
+        'description': 'Exactly 4 bytes'
     },
     {
-        'name': 'five_bytes',
-        'message': b'HELLO',
-        'description': 'Five bytes (partial second word)'
+        'name': 'eight_bytes',
+        'message': b'HELLO123',
+        'description': 'Eight bytes (one full 64-bit word)'
     },
     {
         'name': 'medium',
@@ -61,76 +69,122 @@ TEST_CASES = [
     },
     {
         'name': 'large_multiblock',
-        # 290 bytes = 72 full words + 2 remaining bytes (0xA55A repeating pattern)
-        # SHA3-224 (144 B/block) → 3 blocks: 2 intermediate + 1 final
-        # SHA3-256 (136 B/block) → 3 blocks: 2 intermediate + 1 final
-        # SHA3-384 (104 B/block) → 3 blocks: 2 intermediate + 1 final
-        # SHA3-512 ( 72 B/block) → 5 blocks: 4 intermediate + 1 final
+        # 290 bytes = multiblock for all variants
         'message': b'\xA5\x5A' * 145,
-        'description': 'Large multiblock message (290 bytes, >=2 intermediate blocks for all variants)'
+        'description': 'Large multiblock message (290 bytes)'
     },
 ]
 
-# SHA-3 variant parameters
+# SHA-3 variant parameters (rates in 64-bit words)
 VARIANTS = {
-    'SHA3_224': {'rate_bits': 1152, 'rate_bytes': 144, 'rate_words': 36, 'enum': 'SHA3_224'},
-    'SHA3_256': {'rate_bits': 1088, 'rate_bytes': 136, 'rate_words': 34, 'enum': 'SHA3_256'},
-    'SHA3_384': {'rate_bits': 832,  'rate_bytes': 104, 'rate_words': 26, 'enum': 'SHA3_384'},
-    'SHA3_512': {'rate_bits': 576,  'rate_bytes': 72,  'rate_words': 18, 'enum': 'SHA3_512'},
+    'SHA3_224': {'rate_bits': 1152, 'rate_bytes': 144, 'rate_words_64': 18, 'enum': 'SHA3_224'},
+    'SHA3_256': {'rate_bits': 1088, 'rate_bytes': 136, 'rate_words_64': 17, 'enum': 'SHA3_256'},
+    'SHA3_384': {'rate_bits': 832,  'rate_bytes': 104, 'rate_words_64': 13, 'enum': 'SHA3_384'},
+    'SHA3_512': {'rate_bits': 576,  'rate_bytes': 72,  'rate_words_64': 9,  'enum': 'SHA3_512'},
 }
 
 
-def message_to_words(message):
+def keccak_byte_swap_64(value: int) -> int:
     """
-    Convert message bytes to 32-bit words (big-endian packing).
+    Simulates keccak.sv byte swap operation on a 64-bit word.
+    Converts big-endian input to little-endian format.
     
-    The padder accepts data as 32-bit words. Bytes are packed into words
-    with byte 0 in bits [31:24], byte 1 in [23:16], etc.
+    in_switch = {in[7:0], in[15:8], in[23:16], in[31:24],
+                 in[39:32], in[47:40], in[55:48], in[63:56]}
+    
+    Example: 0x0102030405060708 → 0x0807060504030201
+    """
+    bytes_list = [(value >> (i * 8)) & 0xFF for i in range(8)]
+    result = 0
+    for i, byte_val in enumerate(reversed(bytes_list)):
+        result |= (byte_val << (i * 8))
+    return result
+
+
+def message_to_words_64_le(message: bytes) -> list:
+    """
+    Convert message bytes to 64-bit words in little-endian format.
+    
+    This simulates the data AFTER keccak.sv's byte swap operation.
+    Message bytes are placed in little-endian byte positions within each 64-bit word.
+    
+    Args:
+        message: Raw message bytes
+    
+    Returns:
+        List of 64-bit words in little-endian format
     """
     words = []
-    for i in range(0, len(message), 4):
-        chunk = message[i:i+4]
-        # Pad chunk to 4 bytes if necessary
-        chunk += b'\x00' * (4 - len(chunk))
-        # Pack as big-endian 32-bit word
-        word = (chunk[0] << 24) | (chunk[1] << 16) | (chunk[2] << 8) | chunk[3]
+    for i in range(0, len(message), 8):
+        chunk = message[i:i+8]
+        # Pack as little-endian: first byte at [7:0], second at [15:8], etc.
+        word = 0
+        for j, byte in enumerate(chunk):
+            word |= (byte << (j * 8))
         words.append(word)
     return words
 
 
+def simulate_padder_output_le(message: bytes, rate_bits: int) -> list:
+    """
+    Simulate the padder's output in 64-bit little-endian format.
+    
+    This accounts for:
+    1. keccak.sv byte swap (input arrives in LE format)
+    2. Padder adds 0x06 suffix and 0x80 closing sentinel
+    3. Output is in little-endian lane format
+    
+    Args:
+        message: Raw message bytes
+        rate_bits: SHA-3 variant rate in bits
+    
+    Returns:
+        List of blocks, where each block is a list of 64-bit LE words
+    """
+    # Use pad10star1 with domain_suffix=0x06 (SHA-3 hardware convention)
+    # NOT 0x60 which is the Python library convention
+    padded = pad10star1(message, rate_bits, domain_suffix=0x06)
+    
+    # Convert padded bytes to 64-bit little-endian words
+    words = message_to_words_64_le(padded)
+    
+    return words
+
+
 def generate_test_vector(test_case, variant_name, variant_info):
-    """Generate a single test vector."""
+    """Generate a single test vector for 64-bit word format."""
     message = test_case['message']
     rate_bits = variant_info['rate_bits']
     rate_bytes = variant_info['rate_bytes']
-    rate_words = variant_info['rate_words']
+    rate_words_64 = variant_info['rate_words_64']
     
-    # Apply SHA-3 padding using the verified pad10star1 function
-    padded = pad10star1(message, rate_bits)  # uses current default domain_suffix
-    
-    # Convert to words
-    padded_words = message_to_words(padded)
+    # Generate padded output in 64-bit little-endian format
+    padded_words_64 = simulate_padder_output_le(message, rate_bits)
     
     # Determine input characteristics
     message_len = len(message)
-    num_full_words = message_len // 4
-    remaining_bytes = message_len % 4
+    num_full_words_64 = message_len // 8
+    remaining_bytes = message_len % 8
     
-    # Convert message to input words
-    input_words = message_to_words(message)
+    # Convert message to input words (64-bit LE)
+    input_words_64 = message_to_words_64_le(message)
     
-    # Split padded output into rate-sized blocks.
-    # All blocks except the last are "intermediate" (full raw-data blocks that
-    # the padder emits before the final padded block).
-    num_blocks = len(padded_words) // rate_words
-    assert len(padded_words) % rate_words == 0, (
-        f"Padded length {len(padded_words)} not a multiple of rate_words {rate_words}"
-    )
-    intermediate_blocks = [
-        padded_words[i * rate_words : (i + 1) * rate_words]
-        for i in range(num_blocks - 1)
-    ]
-    final_block = padded_words[-rate_words:]
+    # Split padded output into rate-sized blocks
+    num_blocks = (len(padded_words_64) + rate_words_64 - 1) // rate_words_64
+    
+    # All blocks except the last are "intermediate" 
+    intermediate_blocks = []
+    for i in range(num_blocks - 1):
+        block = padded_words_64[i * rate_words_64 : (i + 1) * rate_words_64]
+        # Pad block to rate_words_64 if necessary
+        while len(block) < rate_words_64:
+            block.append(0)
+        intermediate_blocks.append(block)
+    
+    # Final block (padded to rate_words_64)
+    final_block = padded_words_64[(num_blocks - 1) * rate_words_64 :]
+    while len(final_block) < rate_words_64:
+        final_block.append(0)
     
     return {
         'test_name': test_case['name'],
@@ -139,21 +193,63 @@ def generate_test_vector(test_case, variant_name, variant_info):
         'description': test_case['description'],
         'message': message,
         'message_len': message_len,
-        'num_full_words': num_full_words,
+        'num_full_words_64': num_full_words_64,
         'remaining_bytes': remaining_bytes,
-        'input_words': input_words,
+        'input_words_64': input_words_64,
         'expected_output': final_block,
         'intermediate_blocks': intermediate_blocks,
-        'rate_words': rate_words,
+        'rate_words_64': rate_words_64,
     }
 
 
+def format_word64_hex(word: int) -> str:
+    """Format a 64-bit word as hex with human-readable byte breakdown."""
+    return f"0x{word:016X}ULL"
+
+
+def format_word64_with_comment(word: int) -> str:
+    """Format a 64-bit word with human-readable comment showing LE byte layout."""
+    hex_str = f"0x{word:016X}ULL"
+    
+    # Show printable ASCII bytes or hex
+    comment_parts = []
+    for byte_pos in range(8):
+        byte_val = (word >> (byte_pos * 8)) & 0xFF
+        if byte_val == 0:
+            continue
+        if 0x20 <= byte_val <= 0x7E:
+            comment_parts.append(f"[{byte_pos}]='{chr(byte_val)}'")
+        else:
+            comment_parts.append(f"[{byte_pos}]=0x{byte_val:02X}")
+    
+    if comment_parts:
+        return f"{hex_str}  // LE: {', '.join(comment_parts)}"
+    else:
+        return hex_str
+
+
 def generate_header_file(output_path):
-    """Generate C++ header file with all test vectors."""
+    """Generate C++ header file with all test vectors (64-bit format)."""
     
     with open(output_path, 'w') as f:
-        f.write("""// Auto-generated test vectors for padder module
-// Generated by generate_padder_vectors.py
+        f.write("""// Auto-generated test vectors for padder module (64-bit word format)
+// Generated by generate_padder_vectors_64bit.py
+//
+// IMPORTANT: Data Format
+// =======================
+// These test vectors use LITTLE-ENDIAN 64-bit word format per Keccak specification.
+// This matches the format used by f_permutation module.
+//
+// Data Flow: User Input → keccak.sv byte swap → Padder → f_permutation
+//
+// Example: SHA3-256('abc') - after keccak.sv byte swap, padder receives:
+//   input word[0] = 0x0000000000636261  (LE: [7:0]='a', [15:8]='b', [23:16]='c')
+//   
+//   Padder adds 0x06 suffix:
+//   output word[0] = 0x0000000006636261  (LE: [7:0]='a', [15:8]='b', [23:16]='c', [31:24]=0x06)
+//
+// This little-endian format is Keccak's standard and matches how the
+// hardware naturally operates. Reading hex values "backwards" is normal!
 
 #ifndef PADDER_TEST_VECTORS_H
 #define PADDER_TEST_VECTORS_H
@@ -174,14 +270,12 @@ struct PadderTestVector {
     std::string name;
     std::string description;
     SHA3Variant variant;
-    std::vector<uint32_t> input_words;  // Input data words
-    uint32_t num_full_words;            // Number of complete 32-bit words
-    uint32_t remaining_bytes;           // Remaining bytes (0-3) in last word
-    std::vector<uint32_t> expected_output;  // Expected padded output
-    uint32_t rate_words;                // Rate in 32-bit words
-    // Each entry is one full rate block emitted before the final padded block.
-    // Empty for single-block messages (the common case).
-    std::vector<std::vector<uint32_t>> intermediate_blocks = {};
+    std::vector<uint64_t> input_words_64;  // Input 64-bit words (little-endian)
+    uint32_t num_full_words_64;            // Number of complete 64-bit words
+    uint32_t remaining_bytes;              // Remaining bytes (0-7) in last word
+    std::vector<uint64_t> expected_output; // Expected padded output (64-bit LE words)
+    uint32_t rate_words_64;                // Rate in 64-bit words
+    std::vector<std::vector<uint64_t>> intermediate_blocks; // Intermediate full blocks
 };
 
 """)
@@ -202,50 +296,56 @@ struct PadderTestVector {
             f.write(f"        \"{vec['description']} ({vec['variant']})\",\n")
             f.write(f"        SHA3Variant::{vec['variant_enum']},\n")
             
-            # Input words
-            f.write("        {")
-            for j, word in enumerate(vec['input_words']):
-                if j > 0:
-                    f.write(", ")
-                f.write(f"0x{word:08X}")
-            f.write("},\n")
+            # Input words (64-bit) - needs double braces for std::vector in aggregate init
+            f.write("        {\n")
+            if vec['input_words_64']:
+                f.write("            {\n")
+                for j, word in enumerate(vec['input_words_64']):
+                    comma = "," if j < len(vec['input_words_64']) - 1 else ""
+                    f.write(f"                {format_word64_hex(word)}{comma}\n")
+                f.write("            }\n")
+            else:
+                # Empty input_words_64 - use single braces only
+                f.write("            \n")
+            f.write("        },\n")
             
-            f.write(f"        {vec['num_full_words']},\n")
+            f.write(f"        {vec['num_full_words_64']},\n")
             f.write(f"        {vec['remaining_bytes']},\n")
             
-            # Expected output
-            f.write("        {")
+            # Expected output (64-bit) - needs double braces for std::vector in aggregate init
+            f.write("        {\n")
+            f.write("            {\n")
             for j, word in enumerate(vec['expected_output']):
-                if j > 0:
-                    if j % 8 == 0:
-                        f.write(",\n         ")
-                    else:
-                        f.write(", ")
-                f.write(f"0x{word:08X}")
-            f.write("},\n")
+                f.write(f"                {format_word64_hex(word)}")
+                if j < len(vec['expected_output']) - 1:
+                    f.write(",")
+                f.write("\n")
+            f.write("            }\n")
+            f.write("        },\n")
             
-            f.write(f"        {vec['rate_words']}")
+            f.write(f"        {vec['rate_words_64']}")
 
-            # Emit intermediate_blocks if present
+            # Emit intermediate_blocks (always - even if empty, to avoid struct field misalignment)
+            f.write(",\n        // intermediate_blocks\n")
+            f.write("        {\n")
             if vec['intermediate_blocks']:
-                f.write(",\n        // intermediate_blocks: full rate blocks before the final padded block\n")
-                f.write("        {\n")
+                f.write("            {\n")
                 for bi, block in enumerate(vec['intermediate_blocks']):
-                    f.write("            {")
+                    f.write("                {\n")
                     for j, word in enumerate(block):
-                        if j > 0:
-                            if j % 8 == 0:
-                                f.write(",\n             ")
-                            else:
-                                f.write(", ")
-                        f.write(f"0x{word:08X}")
-                    f.write("}")
+                        f.write(f"                    {format_word64_hex(word)}")
+                        if j < len(block) - 1:
+                            f.write(",")
+                        f.write("\n")
+                    f.write("                }")
                     if bi < len(vec['intermediate_blocks']) - 1:
                         f.write(",")
                     f.write("\n")
-                f.write("        }\n")
+                f.write("            }\n")
             else:
-                f.write("\n")
+                # Empty intermediate_blocks - use empty braces only
+                f.write("            \n")
+            f.write("        }\n")
 
             f.write("    }")
 
@@ -257,7 +357,11 @@ struct PadderTestVector {
         f.write("};\n\n")
         f.write("#endif // PADDER_TEST_VECTORS_H\n")
     
-    print(f"Generated {len(all_vectors)} test vectors in {output_path}")
+    print(f"Generated {len(all_vectors)} test vectors (64-bit format)")
+    for vec in all_vectors:
+        num_inter = len(vec['intermediate_blocks'])
+        chain_str = f" ({num_inter} intermediate blocks)" if num_inter > 0 else ""
+        print(f"  - {vec['test_name']}_{vec['variant']}: {vec['message_len']} bytes{chain_str}")
 
 
 if __name__ == '__main__':
@@ -266,4 +370,4 @@ if __name__ == '__main__':
     output_file = output_dir / 'padder_test_vectors.h'
     
     generate_header_file(output_file)
-    print(f"Test vectors written to: {output_file}")
+    print(f"\nTest vectors written to: {output_file}")

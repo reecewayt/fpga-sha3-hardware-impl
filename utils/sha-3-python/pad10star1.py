@@ -74,8 +74,8 @@ def pad10star1(message, rate_bits, domain_suffix=0x60):
     
     # Check if we can fit both domain suffix and final bit in one byte
     if padding_needed == 1:
-        # Domain suffix 0x60 and final bit 0x01 combine to 0x61
-        padded.append(domain_suffix | 0x01)
+        # Domain suffix combined with final bit 0x80
+        padded.append(domain_suffix | 0x80)
     else:
         # Add domain suffix byte
         padded.append(domain_suffix)
@@ -84,8 +84,8 @@ def pad10star1(message, rate_bits, domain_suffix=0x60):
         for _ in range(padding_needed - 2):
             padded.append(0x00)
         
-        # Add final bit (0x01 = 0b00000001)
-        padded.append(0x01)
+        # Add final bit (0x80 = 0b10000000) - the closing sentinel per FIPS 202
+        padded.append(0x80)
     
     # Verify result is correct length
     assert len(padded) % rate_bytes == 0, f"Padding failed: {len(padded)} not multiple of {rate_bytes}"
