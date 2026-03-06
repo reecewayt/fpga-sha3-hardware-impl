@@ -104,9 +104,79 @@ public:
             dut->in[IN_WORDS - 1 - k] = in_words[k];
     }
 
+    // ── Print input summary ───────────────────────────────────────────────────
+    void print_input_summary(const FPermTestVector& tv) {
+        std::cout << "     Input (first 3 lanes, LE format):" << std::endl;
+        for (int lane = 0; lane < 3 && lane < 18; lane++) {
+            int k = lane * 2;
+            uint64_t lane_val = (uint64_t(tv.in_words[k]) << 32) | tv.in_words[k + 1];
+            if (lane_val == 0 && lane > 0) continue;  // Skip zero lanes after first
+            
+            int x = lane % 5;
+            int y = lane / 5;
+            std::cout << "       A[" << x << "][" << y << "] = 0x"
+                      << std::hex << std::setw(16) << std::setfill('0') << lane_val;
+            
+            // Show human-readable interpretation for non-zero lanes
+            if (lane_val != 0) {
+                std::cout << "  (";
+                bool first = true;
+                for (int b = 0; b < 8; b++) {
+                    uint8_t byte = (lane_val >> (b * 8)) & 0xFF;
+                    if (byte != 0) {
+                        if (!first) std::cout << " ";
+                        if (byte >= 0x20 && byte <= 0x7E) {
+                            std::cout << "[" << b << "]='" << char(byte) << "'";
+                        } else {
+                            std::cout << "[" << b << "]=0x" << std::hex << std::setw(2) << int(byte);
+                        }
+                        first = false;
+                    }
+                }
+                std::cout << ")";
+            }
+            std::cout << std::dec << std::endl;
+        }
+    }
+
+    // ── Print expected output digest ──────────────────────────────────────────
+    void print_expected_digest(const FPermTestVector& tv, int digest_bits = 256) {
+        int digest_words = digest_bits / 32;
+        std::cout << "     Expected digest (" << digest_bits << " bits):" << std::endl;
+        std::cout << "       0x";
+        for (int k = 0; k < digest_words; k++) {
+            std::cout << std::hex << std::setw(8) << std::setfill('0') << tv.expected_out[k];
+        }
+        std::cout << std::dec << std::endl;
+    }
+
+    // ── Print actual output digest ────────────────────────────────────────────
+    void print_actual_digest(int digest_bits = 256) {
+        int digest_words = digest_bits / 32;
+        std::cout << "     Actual digest   (" << digest_bits << " bits):" << std::endl;
+        std::cout << "       0x";
+        for (int k = 0; k < digest_words; k++) {
+            std::cout << std::hex << std::setw(8) << std::setfill('0') << dut->out[STATE_WORDS - 1 - k];
+        }
+        std::cout << std::dec << std::endl;
+    }
+
     // ── Run one permutation and return pass/fail ─────────────────────────────
     // Called after reset OR after a previous permutation completed.
-    bool run(const FPermTestVector& tv, bool show_all_mismatches = true) {
+    bool run(const FPermTestVector& tv, bool verbose = false) {
+        // Show what we're testing
+        print_input_summary(tv);
+        
+        // Determine digest size from test name
+        int digest_bits = 256;  // default
+        std::string name_str(tv.name);
+        if (name_str.find("512") != std::string::npos) {
+            digest_bits = 512;
+        } else if (name_str.find("256") != std::string::npos) {
+            digest_bits = 256;
+        }
+        print_expected_digest(tv, digest_bits);
+        
         // Feed the block for exactly one cycle
         set_in(tv.in_words);
         dut->in_ready = 1;
@@ -128,33 +198,48 @@ public:
 
         // Compare output
         bool pass = true;
+        int mismatch_count = 0;
         for (int k = 0; k < STATE_WORDS; k++) {
             uint32_t got = dut->out[STATE_WORDS - 1 - k];
             uint32_t exp = tv.expected_out[k];
             if (got != exp) {
-                if (pass) {
-                    std::cout << "[FAIL] " << tv.name << std::endl;
-                    pass = false;
-                }
-                if (show_all_mismatches) {
-                    // Which Python lane does this word belong to?
-                    int lane_idx = k / 2;       // 0-24
-                    int x        = (lane_idx % 5);
-                    int y        = (lane_idx / 5);
-                    const char* half = (k % 2 == 0) ? "hi" : "lo";
-                    std::cout << "  out[" << std::setw(2) << k << "]"
-                              << " A[" << x << "][" << y << "] " << half
-                              << ": expected=0x" << std::hex << std::setw(8) << std::setfill('0') << exp
-                              << " got=0x"       << std::setw(8) << got
-                              << std::dec << std::setfill(' ') << std::endl;
-                }
+                pass = false;
+                mismatch_count++;
             }
         }
 
-        if (pass)
+        if (!pass) {
+            std::cout << "[FAIL] " << tv.name << " — " << mismatch_count << " word mismatches" << std::endl;
+            print_actual_digest(digest_bits);
+            
+            if (verbose) {
+                std::cout << "     First mismatches:" << std::endl;
+                int shown = 0;
+                for (int k = 0; k < STATE_WORDS && shown < 5; k++) {
+                    uint32_t got = dut->out[STATE_WORDS - 1 - k];
+                    uint32_t exp = tv.expected_out[k];
+                    if (got != exp) {
+                        int lane_idx = k / 2;
+                        int x = (lane_idx % 5);
+                        int y = (lane_idx / 5);
+                        const char* half = (k % 2 == 0) ? "hi" : "lo";
+                        std::cout << "       out[" << std::setw(2) << k << "]"
+                                  << " A[" << x << "][" << y << "] " << half
+                                  << ": exp=0x" << std::hex << std::setw(8) << std::setfill('0') << exp
+                                  << " got=0x" << std::setw(8) << got
+                                  << std::dec << std::setfill(' ') << std::endl;
+                        shown++;
+                    }
+                }
+            }
+        } else {
             std::cout << "[PASS] " << tv.name
-                      << "  (out_ready after " << cycles << " calc cycles)"
+                      << "  (computed in " << cycles << " cycles)"
                       << std::endl;
+            if (verbose) {
+                print_actual_digest(digest_bits);
+            }
+        }
 
         return pass;
     }
@@ -167,6 +252,7 @@ int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
 
     bool        enable_trace = false;
+    bool        verbose      = false;
     std::string trace_file   = "f_permutation_trace.vcd";
 
     for (int i = 1; i < argc; i++) {
@@ -177,9 +263,14 @@ int main(int argc, char** argv) {
                 trace_file = argv[i + 1];
                 ++i;
             }
+        } else if (arg == "-v" || arg == "--verbose") {
+            verbose = true;
         } else if (arg == "--help" || arg == "-h") {
-            std::cout << "Usage: " << argv[0] << " [--trace [filename.vcd]]" << std::endl;
+            std::cout << "Usage: " << argv[0] << " [OPTIONS]" << std::endl;
+            std::cout << "Options:" << std::endl;
             std::cout << "  --trace [file]  Enable VCD waveform output (default: f_permutation_trace.vcd)" << std::endl;
+            std::cout << "  -v, --verbose   Show detailed test information including actual outputs" << std::endl;
+            std::cout << "  -h, --help      Show this help message" << std::endl;
             return 0;
         }
     }
@@ -194,7 +285,10 @@ int main(int argc, char** argv) {
     std::cout << "========================================" << std::endl;
     std::cout << "f_permutation Module Test Suite"         << std::endl;
     std::cout << "========================================" << std::endl;
-    std::cout << "Test vectors: " << NUM_F_PERM_TEST_VECTORS << std::endl << std::endl;
+    std::cout << "Test vectors: " << NUM_F_PERM_TEST_VECTORS << std::endl;
+    if (verbose)
+        std::cout << "Verbose mode: ON" << std::endl;
+    std::cout << std::endl;
 
     int passed = 0, failed = 0, skipped = 0;
 
@@ -219,10 +313,11 @@ int main(int argc, char** argv) {
                 ++skipped;
                 continue;
             }
+            std::cout << "     Chained from test [" << dep << "]" << std::endl;
             // No reset; hardware holds the output of the previous permutation
         }
 
-        bool result = tb.run(tv);
+        bool result = tb.run(tv, verbose);
         ok[i] = result;
         if (result) ++passed;
         else        ++failed;
