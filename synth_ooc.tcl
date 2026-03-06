@@ -20,6 +20,9 @@ set REPORTS_DIR "synth_reports"
 set MODULES [list \
     "rconst_lut" \
     "round" \
+    "padder" \
+    "f_permutation" \
+    "keccak" \
     "sha3-wb-fifo8" \
     "sha3-wb-fifo16" \
     "sha3-wb-fifo32" \
@@ -32,6 +35,9 @@ set MODULES [list \
 array set MODULE_DEPS {
     rconst_lut      {}
     round           {}
+    padder          {}
+    f_permutation   {rtl/rconst_lut.sv rtl/round.sv}
+    keccak          {rtl/rconst_lut.sv rtl/round.sv rtl/f_permutation.sv rtl/padder.sv}
     sha3-wb-fifo8   {}
     sha3-wb-fifo16  {}
     sha3-wb-fifo32  {}
@@ -43,6 +49,9 @@ array set MODULE_DEPS {
 array set MODULE_TOP_NAME {
     rconst_lut      "rconst_lut"
     round           "round"
+    padder          "padder"
+    f_permutation   "f_permutation"
+    keccak          "keccak"
     sha3-wb-fifo8   "sha3_wb"
     sha3-wb-fifo16  "sha3_wb"
     sha3-wb-fifo32  "sha3_wb"
@@ -54,6 +63,9 @@ array set MODULE_TOP_NAME {
 array set MODULE_GENERICS {
     rconst_lut      {}
     round           {}
+    padder          {}
+    f_permutation   {}
+    keccak          {}
     sha3-wb-fifo8   {-generic FIFO_DEPTH=8}
     sha3-wb-fifo16  {-generic FIFO_DEPTH=16}
     sha3-wb-fifo32  {-generic FIFO_DEPTH=32}
