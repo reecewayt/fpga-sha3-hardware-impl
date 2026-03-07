@@ -365,118 +365,221 @@ def generate_header(vectors: list, output_path: str):
 def main():
     vectors = []
 
+    # ===========================================================================
+    # SECTION 1: BASELINE TESTS (Reference correctness)
+    # ===========================================================================
+    
     # ── [0] All-zero in, zero initial state ───────────────────────────────────
-    # Keccak-f[1600] applied to the all-zero state.
+    # Keccak-f[1600] applied to the all-zero state (reference for correctness)
     in_zeros = [0] * MAX_RATE_WORDS
     vectors.append({
-        "name":            "all_zeros",
-        "description":     "Zero in XOR zero state = Keccak-f[1600] on all-zero state",
+        "name":            "baseline_all_zeros",
+        "description":     "Baseline: Keccak-f[1600] on all-zero state (reference)",
         "in_words":        in_zeros,
         "expected_out":    run_permutation(in_zeros),
         "prev_result_idx": -1,
     })
 
-    # ── [1] SHA3-256 empty message (single block) ─────────────────────────────
-    # Empty message: byte_num=0, is_last=1
-    # After keccak byte swap: no data bytes
-    # Padder produces: 0x0000000000000006 (0x06 suffix at bit [7:0])
-    # For SHA3-256, rate=1088 bits (136 bytes, 17 words of 64-bit)
-    # Closing sentinel 0x80 goes at end of rate portion
+    # ===========================================================================
+    # SECTION 2: SHA3 VARIANT BOUNDARY TESTS (Rate-specific, empty message)
+    # ===========================================================================
+    # Tests each SHA3 variant with different rate block sizes
+    # Validates correct sentinel placement at variant-specific rate boundaries
+    
     padded_empty = message_to_padder_output_le([])  # 0x0000000000000006
     w0_hi, w0_lo = le64_to_words32_msb_first(padded_empty)
     
+    # SHA3-224: rate = 144 bytes (18 words)
+    in_sha224_empty = make_in_words((0, w0_hi), (1, w0_lo), (35, 0x00000080))
+    vectors.append({
+        "name":            "variant_sha3_224_empty",
+        "description":     "SHA3-224 empty message (rate=18 words, closing sentinel at index 35)",
+        "in_words":        in_sha224_empty,
+        "expected_out":    run_permutation(in_sha224_empty),
+        "prev_result_idx": -1,
+    })
+    
+    # SHA3-256: rate = 136 bytes (17 words)
     in_sha256_empty = make_in_words((0, w0_hi), (1, w0_lo), (33, 0x00000080))
     vectors.append({
-        "name":            "sha3_256_empty",
-        "description":     "SHA3-256 empty message: padded block XOR into zero state",
-        "human_readable":  "Lane 1 = 0x0000000000000006 (LE: [7:0]=0x06 suffix)",
+        "name":            "variant_sha3_256_empty",
+        "description":     "SHA3-256 empty message (rate=17 words, closing sentinel at index 33)",
         "in_words":        in_sha256_empty,
         "expected_out":    run_permutation(in_sha256_empty),
         "prev_result_idx": -1,
     })
-
-    # ── [2] SHA3-512 empty message (single block) ─────────────────────────────
-    # For SHA3-512, rate=576 bits (72 bytes, 9 words of 64-bit)
-    # Same padded word as SHA3-256 empty, but closing sentinel at different position
-    w0_hi_512, w0_lo_512 = le64_to_words32_msb_first(padded_empty)
     
-    in_sha512_empty = make_in_words((0, w0_hi_512), (1, w0_lo_512), (17, 0x00000080))
+    # SHA3-384: rate = 104 bytes (13 words)
+    in_sha384_empty = make_in_words((0, w0_hi), (1, w0_lo), (25, 0x00000080))
     vectors.append({
-        "name":            "sha3_512_empty",
-        "description":     "SHA3-512 empty message: padded block XOR into zero state",
-        "human_readable":  "Lane 1 = 0x0000000000000006 (LE: [7:0]=0x06 suffix)",
+        "name":            "variant_sha3_384_empty",
+        "description":     "SHA3-384 empty message (rate=13 words, closing sentinel at index 25)",
+        "in_words":        in_sha384_empty,
+        "expected_out":    run_permutation(in_sha384_empty),
+        "prev_result_idx": -1,
+    })
+    
+    # SHA3-512: rate = 72 bytes (9 words)
+    in_sha512_empty = make_in_words((0, w0_hi), (1, w0_lo), (17, 0x00000080))
+    vectors.append({
+        "name":            "variant_sha3_512_empty",
+        "description":     "SHA3-512 empty message (rate=9 words, closing sentinel at index 17)",
         "in_words":        in_sha512_empty,
         "expected_out":    run_permutation(in_sha512_empty),
         "prev_result_idx": -1,
     })
 
-    # ── [3] SHA3-256 single byte 0x42 ────────────────────────────────────────
-    # Message: single byte 0x42
-    # After keccak byte swap: 0x42 ends up at bit [7:0] (little-endian)
-    # Padder with byte_num=1: {48'h0, 8'h06, 0x42} = 0x0000000000000642
-    padded_0x42 = message_to_padder_output_le([0x42])  # 0x0000000000000642
-    w1_hi, w1_lo = le64_to_words32_msb_first(padded_0x42)
+    # ===========================================================================
+    # SECTION 3: MESSAGE LENGTH BOUNDARY TESTS (Data portion variations)
+    # ===========================================================================
+    # Tests various message sizes across different variants
     
-    in_sha256_0x42 = make_in_words((0, w1_hi), (1, w1_lo), (33, 0x00000080))
+    # Single byte (0x42)
+    padded_0x42 = message_to_padder_output_le([0x42])  # 0x0000000000000642
+    w_0x42_hi, w_0x42_lo = le64_to_words32_msb_first(padded_0x42)
+    in_sha224_0x42 = make_in_words((0, w_0x42_hi), (1, w_0x42_lo), (35, 0x00000080))
     vectors.append({
-        "name":            "sha3_256_byte_0x42",
-        "description":     "SHA3-256 single byte 0x42: padded block XOR into zero state",
-        "human_readable":  "Lane 1 = 0x0000000000000642 (LE: [7:0]=0x42, [15:8]=0x06)",
+        "name":            "message_sha224_single_byte",
+        "description":     "SHA3-224 message: single byte 0x42 (padded: 0x0000000000000642)",
+        "in_words":        in_sha224_0x42,
+        "expected_out":    run_permutation(in_sha224_0x42),
+        "prev_result_idx": -1,
+    })
+    
+    in_sha256_0x42 = make_in_words((0, w_0x42_hi), (1, w_0x42_lo), (33, 0x00000080))
+    vectors.append({
+        "name":            "message_sha256_single_byte",
+        "description":     "SHA3-256 message: single byte 0x42 (padded: 0x0000000000000642)",
         "in_words":        in_sha256_0x42,
         "expected_out":    run_permutation(in_sha256_0x42),
         "prev_result_idx": -1,
     })
-
-    # ── [4] SHA3-256 'abc' (3 bytes) ─────────────────────────────────────────
-    # Message: 'abc' = [0x61, 0x62, 0x63]
-    # After keccak byte swap: bytes are in little-endian positions
-    # Padder with byte_num=3: {32'h0, 8'h06, 0x636261} = 0x0000000006636261
-    #   Bit layout: [31:24]=0x06, [23:16]=0x63, [15:8]=0x62, [7:0]=0x61
-    padded_abc = message_to_padder_output_le([0x61, 0x62, 0x63])  # 0x0000000006636261
-    w2_hi, w2_lo = le64_to_words32_msb_first(padded_abc)
     
-    in_sha256_abc = make_in_words((0, w2_hi), (1, w2_lo), (33, 0x00000080))
+    # Three bytes 'abc'
+    padded_abc = message_to_padder_output_le([0x61, 0x62, 0x63])  # 0x0000000006636261
+    w_abc_hi, w_abc_lo = le64_to_words32_msb_first(padded_abc)
+    in_sha256_abc = make_in_words((0, w_abc_hi), (1, w_abc_lo), (33, 0x00000080))
     vectors.append({
-        "name":            "sha3_256_abc",
-        "human_readable":  "Lane 1 = 0x0000000006636261 (LE: [7:0]='a', [15:8]='b', [23:16]='c', [31:24]=0x06)",
-        "description":     "SHA3-256 'abc' (3 bytes): padded block XOR into zero state",
+        "name":            "message_sha256_abc",
+        "description":     "SHA3-256 message: 'abc' (3 bytes, padded: 0x0000000006636261)",
         "in_words":        in_sha256_abc,
         "expected_out":    run_permutation(in_sha256_abc),
         "prev_result_idx": -1,
     })
-
-    # ── [5] SHA3-512 multiblock — first block (18 × 0xDEADBEEF) ─────────────
-    # Intermediate block: no padding yet, just raw data
-    # Each 32-bit word 0xDEADBEEF needs to go through the pipeline
-    # HOWEVER: For intermediate blocks, the padder doesn't modify the data
-    # The 0xDEADBEEF values represent 32-bit chunks already in the system
-    # For multiblock, intermediate blocks are NOT byte-swapped per-word
-    # They represent actual lane data in little-endian format
-    in_block1 = make_in_words(*[(i, 0xDEADBEEF) for i in range(18)])
-    expected_block1 = run_permutation(in_block1)
+    
+    in_sha512_abc = make_in_words((0, w_abc_hi), (1, w_abc_lo), (17, 0x00000080))
     vectors.append({
-        "name":            "sha3_512_multiblock_block1",
-        "description":     "SHA3-512 multiblock: 18 x 0xDEADBEEF XOR into zero state",
-        "in_words":        in_block1,
-        "expected_out":    expected_block1,
+        "name":            "message_sha512_abc",
+        "description":     "SHA3-512 message: 'abc' (3 bytes, padded: 0x0000000006636261)",
+        "in_words":        in_sha512_abc,
+        "expected_out":    run_permutation(in_sha512_abc),
+        "prev_result_idx": -1,
+    })
+    
+    # Eight bytes (full 64-bit word)
+    padded_8bytes = message_to_padder_output_le([i for i in range(8)])  # 0x0607050403020100
+    w_8b_hi, w_8b_lo = le64_to_words32_msb_first(padded_8bytes)
+    in_sha256_8bytes = make_in_words((0, w_8b_hi), (1, w_8b_lo), (33, 0x00000080))
+    vectors.append({
+        "name":            "message_sha256_8bytes",
+        "description":     "SHA3-256 message: 8 bytes [0x00..0x07] (full 64-bit word)",
+        "in_words":        in_sha256_8bytes,
+        "expected_out":    run_permutation(in_sha256_8bytes),
         "prev_result_idx": -1,
     })
 
-    # ── [6] SHA3-512 multiblock — second block (chained from [5]) ────────────
-    # Final block with padding: 2 words of 0xDEADBEEF, then padding
-    # The 0x06 suffix and closing sentinel 0x80 are added
-    # For the final block, we have 8 bytes of data (2 × 32-bit words)
-    # This would be byte_num=0 (full 64-bit word) followed by padding
-    in_block2 = make_in_words(
-        (0,  0xDEADBEEF), (1,  0xDEADBEEF),
-        (2,  0x06000000), (17, 0x00000080),
-    )
+    # ===========================================================================
+    # SECTION 4: MULTIBLOCK CHAIN TESTS (State persistence)
+    # ===========================================================================
+    # Validates state XOR persists correctly across multiple blocks
+    
+    # SHA3-256 multiblock: block 1 (intermediate, no padding)
+    in_mb_blk1 = make_in_words(*[(i, 0xDEADBEEF) for i in range(17)])
+    expected_mb_blk1 = run_permutation(in_mb_blk1)
     vectors.append({
-        "name":            "sha3_512_multiblock_block2",
-        "description":     "SHA3-512 multiblock: second (padded) block chained from block1",
-        "in_words":        in_block2,
-        "expected_out":    run_permutation(in_block2, initial_state_words=expected_block1),
-        "prev_result_idx": 5,   # index of sha3_512_multiblock_block1
+        "name":            "multiblock_sha256_block1",
+        "description":     "SHA3-256 multiblock: intermediate block 1 (17 x 0xDEADBEEF)",
+        "in_words":        in_mb_blk1,
+        "expected_out":    expected_mb_blk1,
+        "prev_result_idx": -1,
+    })
+    
+    # SHA3-256 multiblock: block 2 (final, padded, chained from block 1)
+    in_mb_blk2 = make_in_words((0, 0xCAFEBABE), (1, 0x12345678), (33, 0x00000080))
+    expected_mb_blk2 = run_permutation(in_mb_blk2, initial_state_words=expected_mb_blk1)
+    vectors.append({
+        "name":            "multiblock_sha256_block2",
+        "description":     "SHA3-256 multiblock: final (padded) block 2 XOR into block1 state",
+        "in_words":        in_mb_blk2,
+        "expected_out":    expected_mb_blk2,
+        "prev_result_idx": 10,   # Index of multiblock_sha256_block1
+    })
+    
+    # SHA3-512 multiblock: block 1 (intermediate, no padding)
+    in_mb_512_blk1 = make_in_words(*[(i, 0xAAAAAAAA) for i in range(9)])
+    expected_mb_512_blk1 = run_permutation(in_mb_512_blk1)
+    vectors.append({
+        "name":            "multiblock_sha512_block1",
+        "description":     "SHA3-512 multiblock: intermediate block 1 (9 x 0xAAAAAAAA)",
+        "in_words":        in_mb_512_blk1,
+        "expected_out":    expected_mb_512_blk1,
+        "prev_result_idx": -1,
+    })
+    
+    # SHA3-512 multiblock: block 2 (final, padded, chained from block 1)
+    in_mb_512_blk2 = make_in_words((0, 0x55555555), (1, 0x55555555), (17, 0x00000080))
+    expected_mb_512_blk2 = run_permutation(in_mb_512_blk2, initial_state_words=expected_mb_512_blk1)
+    vectors.append({
+        "name":            "multiblock_sha512_block2",
+        "description":     "SHA3-512 multiblock: final (padded) block 2 XOR into block1 state",
+        "in_words":        in_mb_512_blk2,
+        "expected_out":    expected_mb_512_blk2,
+        "prev_result_idx": 12,   # Index of multiblock_sha512_block1
+    })
+
+    # ===========================================================================
+    # SECTION 5: EDGE PATTERN TESTS (Bit-level validation)
+    # ===========================================================================
+    # Tests corner cases and specific bit patterns for comprehensive coverage
+    
+    # Alternating bits pattern: 0xAAAAAAAA and 0x55555555
+    in_alternating = make_in_words(*[(i, 0xAAAAAAAA if i % 2 == 0 else 0x55555555) for i in range(18)])
+    vectors.append({
+        "name":            "pattern_alternating_bits",
+        "description":     "Edge pattern: alternating 0xAAAAAAAA and 0x55555555 across lanes",
+        "in_words":        in_alternating,
+        "expected_out":    run_permutation(in_alternating),
+        "prev_result_idx": -1,
+    })
+    
+    # Sequential pattern: 0x00000000, 0x11111111, 0x22222222, ... (wrapping)
+    in_sequential = make_in_words(*[(i, (i % 16) * 0x11111111) for i in range(18)])
+    vectors.append({
+        "name":            "pattern_sequential",
+        "description":     "Edge pattern: sequential values (0x00..0xF repeated as 0xNN...NNN)",
+        "in_words":        in_sequential,
+        "expected_out":    run_permutation(in_sequential),
+        "prev_result_idx": -1,
+    })
+    
+    # All ones pattern: 0xFFFFFFFF in rate portion
+    in_all_ones = make_in_words(*[(i, 0xFFFFFFFF) for i in range(18)])
+    vectors.append({
+        "name":            "pattern_all_ones",
+        "description":     "Edge pattern: all ones (0xFFFFFFFF) across all rate lanes",
+        "in_words":        in_all_ones,
+        "expected_out":    run_permutation(in_all_ones),
+        "prev_result_idx": -1,
+    })
+    
+    # Sparse pattern: only lower bits set
+    in_sparse = make_in_words(*[(i, 0x000000FF if i < 6 else 0x00000000) for i in range(18)])
+    vectors.append({
+        "name":            "pattern_sparse",
+        "description":     "Edge pattern: sparse data (0x000000FF in first 6 words, zeros elsewhere)",
+        "in_words":        in_sparse,
+        "expected_out":    run_permutation(in_sparse),
+        "prev_result_idx": -1,
     })
 
     # ── Write header ──────────────────────────────────────────────────────────
@@ -484,11 +587,36 @@ def main():
     output = os.path.normpath(os.path.join(here, "../../tests/f_permutation_test_vectors.h"))
     generate_header(vectors, output)
 
-    print(f"Generated {len(vectors)} test vectors -> {output}")
-    for i, v in enumerate(vectors):
-        dep = v["prev_result_idx"]
-        chain = f" (chained from [{dep}])" if dep >= 0 else ""
-        print(f"  [{i}] {v['name']}{chain}")
+    print(f"\n{'='*75}")
+    print(f"Generated f_permutation test vectors")
+    print(f"{'='*75}")
+    print(f"\nTotal: {len(vectors)} test vectors -> {output}\n")
+    print("Organization by category:\n")
+    
+    print(f"  SECTION 1: BASELINE (1 test)")
+    print(f"    [0] {vectors[0]['name']}\n")
+    
+    print(f"  SECTION 2: SHA3 VARIANT BOUNDARIES (4 tests)")
+    for i in range(1, 5):
+        print(f"    [{i}] {vectors[i]['name']}")
+    print()
+    
+    print(f"  SECTION 3: MESSAGE LENGTH VARIATIONS (5 tests)")
+    for i in range(5, 10):
+        print(f"    [{i}] {vectors[i]['name']}")
+    print()
+    
+    print(f"  SECTION 4: MULTIBLOCK CHAINS (4 tests)")
+    for i in range(10, 14):
+        dep = vectors[i]["prev_result_idx"]
+        chain = f" [chained from {dep}]" if dep >= 0 else ""
+        print(f"    [{i}] {vectors[i]['name']}{chain}")
+    print()
+    
+    print(f"  SECTION 5: EDGE PATTERNS (4 tests)")
+    for i in range(14, len(vectors)):
+        print(f"    [{i}] {vectors[i]['name']}")
+    print()
 
 
 if __name__ == "__main__":

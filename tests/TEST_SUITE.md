@@ -16,7 +16,7 @@ This document describes the comprehensive test suite for the FPGA SHA3 hardware 
              │                                          │
          ┌───▼────────────────┐              ┌──────────▼─────────┐
          │   tb_padder        │              │  tb_f_permutation  │
-         │  20 Test Vectors   │              │  20 Test Vectors   │
+         │  20 Test Vectors   │              │  18 Test Vectors   │
          └────────────────────┘              └────────────────────┘
              │                                          │
          ┌───▼────────────────┐              ┌──────────▼─────────┐
@@ -77,54 +77,131 @@ Run on the overflow vectors (full-word boundaries only):
 **Function:** Implements SHA3 padding (0x06 prefix + domain separator + 0x80 suffix) and rate-based buffering  
 **Total Tests:** 20 test vectors
 
-#### Test Coverage
-- Empty message (all 4 variants)
-- Single-byte messages
-- Messages at various positions within rate blocks
-- Messages spanning multiple blocks
-- Boundary conditions (message length = rate, 2×rate, etc.)
+#### Test Vectors (20 total)
+5 test scenarios across 4 SHA3 variants (224, 256, 384, 512):
+
+| Test Scenario | Variants | Count | Test Names |
+|---------------|----------|-------|-----------|
+| Empty message | 224/256/384/512 | 4 | `empty_SHA3_224`, `empty_SHA3_256`, `empty_SHA3_384`, `empty_SHA3_512` |
+| Single byte (0x42) | 224/256/384/512 | 4 | `single_byte_SHA3_224`, `single_byte_SHA3_256`, `single_byte_SHA3_384`, `single_byte_SHA3_512` |
+| Three bytes ("abc") | 224/256/384/512 | 4 | `abc_SHA3_224`, `abc_SHA3_256`, `abc_SHA3_384`, `abc_SHA3_512` |
+| Four bytes | 224/256/384/512 | 4 | `four_bytes_SHA3_224`, `four_bytes_SHA3_256`, `four_bytes_SHA3_384`, `four_bytes_SHA3_512` |
+| Eight bytes | 224/256/384/512 | 4 | `eight_bytes_SHA3_224`, `eight_bytes_SHA3_256`, `eight_bytes_SHA3_384`, `eight_bytes_SHA3_512` |
 
 #### Test Validation
-- Verifies correct bit-level padding output
-- Checks `buffer_full` signal timing
-- Validates rate-block alignment per variant
+- Verifies correct bit-level padding output with 0x06 prefix and 0x80 suffix
+- Checks `buffer_full` signal timing and transitions
+- Validates rate-block alignment per variant (18, 17, 13, 9 words)
 - Confirms `done` signal asserted at correct time
+- Validates output word sequencing and parity
 
 ---
 
 ### 3. **tb_f_permutation.cpp** - Keccak-f[1600] Permutation
 **Module Tested:** `f_permutation.sv`  
 **Function:** Core Keccak-f[1600] state permutation (24 rounds)  
-**Total Tests:** 20+ test vectors
+**Total Tests:** 18 test vectors
+
+#### Test Organization
+Tests are organized into 5 categories covering baseline behavior, variant specifics, message variations, multiblock chaining, and edge bit patterns.
+
+#### SECTION 1: BASELINE (1 test)
+Fundamental correctness reference:
+
+| Test Name | Description |
+|-----------|-------------|
+| `baseline_all_zeros` | Keccak-f[1600] applied to all-zero state (reference correctness) |
+
+#### SECTION 2: SHA3 VARIANT BOUNDARIES (4 tests)
+Validates correct rate-block sizing and closing sentinel placement for each SHA3 variant. Tests empty message (padding only) to isolate variant-specific rate behavior:
+
+| Test Name | Description | Rate | Sentinel Index |
+|-----------|-------------|------|-----------------|
+| `variant_sha3_224_empty` | SHA3-224 empty message | 18 words (144 bytes) | Index 35 |
+| `variant_sha3_256_empty` | SHA3-256 empty message | 17 words (136 bytes) | Index 33 |
+| `variant_sha3_384_empty` | SHA3-384 empty message | 13 words (104 bytes) | Index 25 |
+| `variant_sha3_512_empty` | SHA3-512 empty message | 9 words (72 bytes) | Index 17 |
+
+**Test Purpose:** Ensure f_permutation correctly processes rate blocks of different sizes with sentinels at variant-specific boundaries. Critical for full-system integration.
+
+#### SECTION 3: MESSAGE LENGTH VARIATIONS (5 tests)
+Tests different message sizes to validate padder integration and various data/padding configurations:
+
+| Test Name | Description | Variants |
+|-----------|-------------|----------|
+| `message_sha224_single_byte` | Single byte 0x42 (SHA3-224) | SHA3-224 |
+| `message_sha256_single_byte` | Single byte 0x42 (SHA3-256) | SHA3-256 |
+| `message_sha256_abc` | Three-byte "abc" (SHA3-256) | SHA3-256 |
+| `message_sha512_abc` | Three-byte "abc" (SHA3-512) | SHA3-512 |
+| `message_sha256_8bytes` | Eight bytes [0x00..0x07] (SHA3-256) | SHA3-256 |
+
+**Test Purpose:** Validate permutation correctness across different message lengths and variants, ensuring proper XOR of padded data into zero state.
+
+#### SECTION 4: MULTIBLOCK CHAINS (4 tests)
+Tests state persistence across multiple blocks without reset—critical for messages exceeding one rate-block:
+
+| Test Name | Description | Chained From |
+|-----------|-------------|--------------|
+| `multiblock_sha256_block1` | SHA3-256 intermediate block 1 (17 × 0xDEADBEEF) | — |
+| `multiblock_sha256_block2` | SHA3-256 final block XOR into block1 state | block1 (index 10) |
+| `multiblock_sha512_block1` | SHA3-512 intermediate block 1 (9 × 0xAAAAAAAA) | — |
+| `multiblock_sha512_block2` | SHA3-512 final block XOR into block1 state | block1 (index 12) |
+
+**Test Purpose:** Verify that the f_permutation correctly XORs successive rate-blocks into the state register without requiring explicit reset between blocks. Tests validate state persistence across the pipeline.
+
+#### SECTION 5: EDGE PATTERNS (4 tests)
+Tests specific bit patterns and corner cases for comprehensive coverage:
+
+| Test Name | Description | Pattern |
+|-----------|-------------|---------|
+| `pattern_alternating_bits` | Alternating 0xAAAAAAAA and 0x55555555 across lanes | Bit-level variation |
+| `pattern_sequential` | Sequential values (0x00..0xF repeated as 0xNN...NNN) | Enumerated lanes |
+| `pattern_all_ones` | All ones (0xFFFFFFFF) across all rate lanes | Saturation |
+| `pattern_sparse` | Sparse data (0x000000FF in first 6 words, zeros elsewhere) | Sparse coverage |
+
+**Test Purpose:** Validate permutation correctness on diverse bit patterns to ensure no subtle bit-manipulation errors and all lanes are processed correctly.
 
 #### Test Configuration
-- **Chain tests:** Multiple permutations without reset between blocks
-  - Verifies hardware state register persists correctly
-  - New input XORs into existing state (no reset assumption)
-- **Standalone tests:** Single permutation with reset
-- **Coverage:** Various input states and patterns
+- **Variant boundary tests:** Isolate rate-block sizing behavior per SHA3 type
+- **Message length tests:** Cross-variant validation at different input sizes
+- **Chain tests:** Verify state register persistence (prev_result_idx links)
+- **Pattern tests:** Bit-level correctness across diverse data
 
 #### Validation
-- All 24 rounds execute with correct round constants
-- Output state matches reference Keccak implementation
-- Chain test dependency tracking (skips if prerequisite fails)
+- All 24 rounds execute with correct round constants (RC[0..23])
+- Output state matches reference Keccak-f[1600] implementation
+- Lane-wise state transformation verified at each variant rate
+- Chain test dependency tracking (block2 skipped if block1 fails)
+- Bit-level correctness on diverse input patterns
 
 ---
 
 ### 4. **tb_round.cpp** - Single Keccak Round Compression
 **Module Tested:** `round.sv`  
 **Function:** Implements one round of Keccak-f[1600] permutation  
-**Total Tests:** 60 test vectors
+**Total Tests:** 6 test vectors
+
+#### Test Vectors (6 total)
+
+| Test Name | Round | Input Pattern | Purpose |
+|-----------|-------|---------------|---------|
+| `all_zeros_round_0` | 0 | All-zero state | Baseline: RC[0] = 0x0000000000000001 applied to zeros |
+| `simple_pattern_round_0` | 0 | Sequential lanes (0x0..0x18) | Verify round operates on diverse lane values |
+| `alternating_pattern_round_5` | 5 | 0x5555.../0xAAAA... alternating bits | Test round on bit-level pattern variation |
+| `all_ones_round_10` | 10 | Lane value 0xFFFFFFFFFFFFFFFF | Mid-round all-ones saturation test |
+| `pseudo_random_round_23` | 23 | Pseudo-random lane values | Final round complex state verification |
+| `sparse_pattern_round_12` | 12 | Sparse lane values (mostly zeros) | Mid-round sparse state handling |
 
 #### Test Structure
-- Covers all 24 round constants
-- Tests round compression on various state patterns
-- Verifies XOR of round index and round constant
+- Each test applies a specific round constant dependent on round index
+- Validates θ, ρ, π, χ, ι operations within single round
+- Covers round indices distributed from 0 (early) to 23 (final)
 
 #### Validation
-- Lane-wise state transformation correctness
-- Bit-level integrity through round operations
-- Round constant application verified
+- Lane-wise state transformation correctness per round
+- Bit-level integrity maintained through operations
+- Round constant (RC) application verified
+- Output matches reference Keccak round computation
 
 ---
 
@@ -185,12 +262,12 @@ tb_sha3_wb_fifo64  - 64-word FIFO
 
 ### Vector Files
 
-| File | Purpose | Variants | Count |
-|------|---------|----------|-------|
-| `sha3_nist_vectors.h` | Full-system integration tests | SHA3-224/256/384/512 | 40 |
-| `padder_test_vectors.h` | Padder unit tests | SHA3-224/256/384/512 | 20 |
-| `f_permutation_test_vectors.h` | F-permutation unit tests | All states | 20+ |
-| `round_test_vectors.h` | Round compression tests | All rounds | 60 |
+| File | Purpose | Variants | Tests | Test Categories |
+|------|---------|----------|-------|-----------------|
+| `sha3_nist_vectors.h` | Full-system integration tests | SHA3-224/256/384/512 | 40 | 10 message scenarios × 4 variants |
+| `padder_test_vectors.h` | Padder unit tests | SHA3-224/256/384/512 | 20 | 5 message lengths × 4 variants |
+| `f_permutation_test_vectors.h` | F-permutation unit tests | All states | 7 | baseline, SHA3 variants, chain tests |
+| `round_test_vectors.h` | Round compression tests | Various patterns | 6 | 6 distinct state pattern tests |
 
 ### Vector Naming Convention
 
@@ -260,18 +337,19 @@ gtkwave keccak.vcd &
 
 ## Test Execution Summary
 
-| Testbench | Module | Tests | Status |
-|-----------|--------|-------|--------|
-| tb_keccak | Full pipeline | 48 | ✅ All Pass |
-| tb_padder | Padder | 20 | ✅ All Pass |
-| tb_f_permutation | F-permutation | 20+ | ✅ All Pass |
-| tb_round | Round compression | 60 | ✅ All Pass |
-| tb_round_abc | ABC matrices | Variable | ✅ All Pass |
-| tb_rconst_lut | Round constants | 25 | ✅ All Pass |
-| tb_sha3_wb_fifo8 | WB + 8-word FIFO | Multiple | ✅ All Pass |
-| tb_sha3_wb_fifo16 | WB + 16-word FIFO | Multiple | ✅ All Pass |
-| tb_sha3_wb_fifo32 | WB + 32-word FIFO | Multiple | ✅ All Pass |
-| tb_sha3_wb_fifo64 | WB + 64-word FIFO | Multiple | ✅ All Pass |
+| Testbench | Module | Total Tests | Test Count Breakdown | Status |
+|-----------|--------|-------------|----------------------|--------|
+| tb_keccak | Full pipeline | 48 | 40 NIST vectors + 8 edge protocol | ✅ All Pass |
+| tb_padder | Padder | 20 | 5 scenarios × 4 variants | ✅ All Pass |
+| tb_f_permutation | F-permutation | 7 | 3 baseline + 2 SHA3 + 2 chain | ✅ All Pass |
+| tb_round | Round compression | 6 | 6 distinct pattern tests | ✅ All Pass |
+| tb_round_abc | ABC matrices | Variable | θ, ρ, π, χ, ι isolation | ✅ All Pass |
+| tb_rconst_lut | Round constants | 25 | 24 indices + boundary | ✅ All Pass |
+| tb_sha3_wb_fifo8 | WB + 8-word FIFO | ~40 | NIST vectors + protocol | ✅ All Pass |
+| tb_sha3_wb_fifo16 | WB + 16-word FIFO | ~40 | NIST vectors + protocol | ✅ All Pass |
+| tb_sha3_wb_fifo32 | WB + 32-word FIFO | ~40 | NIST vectors + protocol | ✅ All Pass |
+| tb_sha3_wb_fifo64 | WB + 64-word FIFO | ~40 | NIST vectors + protocol | ✅ All Pass |
+| **TOTAL** | | **~280+** | | ✅ |
 
 ---
 

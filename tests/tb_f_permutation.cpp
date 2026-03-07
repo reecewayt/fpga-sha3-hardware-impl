@@ -192,7 +192,6 @@ public:
         } else if (name_str.find("256") != std::string::npos) {
             digest_bits = 256;
         }
-        print_expected_digest(tv, digest_bits);
         
         // Feed the block for exactly one cycle
         set_in(tv.in_words);
@@ -233,6 +232,7 @@ public:
 
         if (!pass) {
             std::cout << "[FAIL] " << tv.name << " — " << mismatch_count << " lane mismatches" << std::endl;
+            print_expected_digest(tv, digest_bits);
             print_actual_digest(digest_bits);
             
             if (verbose) {
@@ -261,9 +261,8 @@ public:
             std::cout << "[PASS] " << tv.name
                       << "  (computed in " << cycles << " cycles)"
                       << std::endl;
-            if (verbose) {
-                print_actual_digest(digest_bits);
-            }
+            print_expected_digest(tv, digest_bits);
+            print_actual_digest(digest_bits);
         }
 
         return pass;
