@@ -160,7 +160,21 @@ public:
             tick();
 
             // For a full last word, send the terminating is_last transaction.
+            // Regression note: for exact-rate endings (e.g. SHA3-512 2 full
+            // blocks + padding-only block), asserting trailing is_last while
+            // buffer_full is still high can miss the pulse and drop the extra
+            // padding block request.
             if (is_last_word && tv.remaining_bytes == 0) {
+                // If the final full data word filled a rate block, wait until
+                // padder can accept the trailing is_last pulse that requests
+                // the extra padding-only block (0x06 ... 0x80).
+                int pad_stall = 0;
+                while (dut->buffer_full && pad_stall < 400) { tick(); pad_stall++; }
+                if (pad_stall >= 400) {
+                    std::cerr << "[ERROR] buffer_full stuck high before trailing is_last\n";
+                    return;
+                }
+
                 std::cout << "    (trailing is_last, byte_num=0)\n";
                 dut->in       = 0;
                 dut->in_ready = 1;
