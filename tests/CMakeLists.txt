@@ -78,6 +78,17 @@ add_verilator_test(tb_keccak keccak
     ${RTL_DIR}/keccak.sv
 )
 
+add_verilator_test(tb_sha3_wb_top sha3_wb_top
+    ${RTL_DIR}/sha3_pkg.sv
+    ${RTL_DIR}/wb/sha3-wb.sv
+    ${RTL_DIR}/wb/sha3_wb_top.sv
+    ${RTL_DIR}/rconst_lut.sv
+    ${RTL_DIR}/round.sv
+    ${RTL_DIR}/f_permutation.sv
+    ${RTL_DIR}/padder.sv
+    ${RTL_DIR}/keccak.sv
+)
+
 # To add more tests, just add lines like:
 # add_verilator_test(tb_keccak_round keccak_round ${RTL_DIR}/keccak_round.sv)
 # add_verilator_test(tb_theta theta ${RTL_DIR}/theta.sv ${RTL_DIR}/helper.sv)

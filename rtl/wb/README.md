@@ -280,23 +280,23 @@ static inline void sha3_write_words(const uint32_t *words, size_t n) {
 }
 
 /* -------------------------------------------------------------------------
- * sha3_pack_u32_le()
+ * sha3_pack_u32_be()
  *
- * Pack up to 4 bytes into one 32-bit word using little-endian byte order:
- *   word[7:0]   = b0
- *   word[15:8]  = b1
- *   word[23:16] = b2
- *   word[31:24] = b3
+ * Pack up to 4 bytes into one 32-bit word using big-endian byte order:
+ *   word[31:24] = b0
+ *   word[23:16] = b1
+ *   word[15:8]  = b2
+ *   word[7:0]   = b3
  *
  * This lets firmware iterate through a byte/string buffer naturally
  * (index 0..N-1) and stream it to IN_FIFO_DATA in 32-bit chunks.
  * ------------------------------------------------------------------------- */
-static inline uint32_t sha3_pack_u32_le(const uint8_t *p, size_t n) {
+static inline uint32_t sha3_pack_u32_be(const uint8_t *p, size_t n) {
     uint32_t w = 0;
-    if (n > 0) w |= (uint32_t)p[0] << 0;
-    if (n > 1) w |= (uint32_t)p[1] << 8;
-    if (n > 2) w |= (uint32_t)p[2] << 16;
-    if (n > 3) w |= (uint32_t)p[3] << 24;
+    if (n > 0) w |= (uint32_t)p[0] << 24;
+    if (n > 1) w |= (uint32_t)p[1] << 16;
+    if (n > 2) w |= (uint32_t)p[2] << 8;
+    if (n > 3) w |= (uint32_t)p[3] << 0;
     return w;
 }
 
@@ -304,7 +304,7 @@ static inline uint32_t sha3_pack_u32_le(const uint8_t *p, size_t n) {
  * sha3_write_bytes()
  *
  * Stream a byte buffer directly to the input FIFO by packing every 4 bytes
- * into one 32-bit word (little-endian).  The final partial word is
+ * into one 32-bit word (big-endian).  The final partial word is
  * zero-padded in unused byte lanes.
  *
  * IMPORTANT: call sha3_set_msglen(len) with the exact byte count before START.
@@ -313,7 +313,7 @@ static inline void sha3_write_bytes(const uint8_t *data, size_t len) {
     for (size_t i = 0; i < len; i += 4) {
         size_t rem = len - i;
         size_t n = (rem >= 4) ? 4 : rem;
-        sha3_write_word(sha3_pack_u32_le(&data[i], n));
+        sha3_write_word(sha3_pack_u32_be(&data[i], n));
     }
 }
 
@@ -396,12 +396,12 @@ const uint8_t msg[] = { 'A', 'B', 'C' };
 sha3_reset();
 sha3_set_mode(SHA3_MODE_256);
 sha3_set_msglen(sizeof(msg));
-sha3_write_bytes(msg, sizeof(msg));   /* writes one word: 0x00434241 */
+sha3_write_bytes(msg, sizeof(msg));   /* writes one word: 0x41424300 */
 sha3_start();
 sha3_wait_done();
 ```
 
-In other words: iterate bytes normally, pack into 32-bit little-endian words,
+In other words: iterate bytes normally, pack into 32-bit big-endian words,
 write to `0x08`, and let the WB module do the 64-bit chunking automatically.
 
 ---
@@ -411,12 +411,12 @@ write to `0x08`, and let the WB module do the 64-bit chunking automatically.
 ```c
 #include "sha3_wb_driver.h"
 
-/* 16-byte message: "Hello, SHA-3!\n\0\0" packed into 32-bit words (little-endian) */
+/* 16-byte message: "Hello, SHA-3!\n\0\0" packed into 32-bit words (big-endian) */
 static const uint32_t msg[4] = {
-    0x6C6C6548,   /* "Hell" */
-    0x532C6F6F,   /* "o, S" */
-    0x332D4148,   /* "HA-3" */
-    0x00000A21    /* "!\n"  + 2 padding bytes (not part of message) */
+    0x48656C6C,   /* "Hell" */
+    0x6F2C2053,   /* "o, S" */
+    0x48412D33,   /* "HA-3" */
+    0x210A0000    /* "!\n"  + 2 padding bytes (not part of message) */
 };
 static const uint64_t MSG_BYTES = 14;   /* "Hello, SHA-3!\n" = 14 bytes */
 

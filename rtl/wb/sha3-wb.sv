@@ -172,12 +172,12 @@ module sha3_wb
 
     // ================================================================
     // Word-pairing buffer: combine two 32-bit words into 64-bit
-    //   word_phase = 0: waiting for/buffering low 32 bits (first word)
-    //   word_phase = 1: have buffered word, current FIFO head is high 32 bits
-    //   sha3_data_out = {in_fifo_rdata[31:0], word_buffer[31:0]} (little-endian)
+    //   word_phase = 0: waiting for/buffering high 32 bits (first word)
+    //   word_phase = 1: have buffered word, current FIFO head is low 32 bits
+    //   sha3_data_out = {word_buffer[31:0], in_fifo_rdata[31:0]}
     // ================================================================
-    logic [31:0] word_buffer;  // holds first word of the pair
-    logic        word_phase;   // 0=low word, 1=high word ready
+    logic [31:0] word_buffer;  // holds first word (high 32 bits)
+    logic        word_phase;   // 0=need high word, 1=low word ready
 
     // ================================================================
     // Output FIFO — implemented as registers (not BRAM).
@@ -230,10 +230,10 @@ module sha3_wb
     // ================================================================
     // SHA3 core combinational drive
     // ================================================================
-    // Paired 64-bit word: {current FIFO head (high 32), buffered word (low 32)}
-    // When no second word is available (bytes_remaining <= 4), use zeros for high 32
-    wire [31:0] high_word = (in_head_valid && bytes_remaining >= 5) ? in_fifo_rdata[31:0] : 32'h0;
-    assign sha3_data_out  = {high_word, word_buffer[31:0]};
+    // Paired 64-bit word: {buffered first word (high 32), current FIFO head (low 32)}
+    // When no second word is available (bytes_remaining <= 4), use zeros for low 32
+    wire [31:0] low_word = (in_head_valid && bytes_remaining >= 5) ? in_fifo_rdata[31:0] : 32'h0;
+    assign sha3_data_out  = {word_buffer[31:0], low_word};
 
     // byte_num: 0-7 valid bytes (0 = 8 bytes = full 64-bit word)
     //   - final_pulse: 0 bytes (padding only)
@@ -367,7 +367,7 @@ module sha3_wb
                                 state       <= S_WAIT_HASH;
 
                             end else if (word_phase == 1'b0) begin
-                                // Phase 0: buffer the low 32 bits (first word of pair)
+                                // Phase 0: buffer the high 32 bits (first word of pair)
                                 if (in_head_valid && bytes_remaining >= 1) begin
                                     word_buffer <= in_fifo_rdata;
                                     word_phase  <= 1'b1;
@@ -375,12 +375,12 @@ module sha3_wb
                                 end
 
                             end else begin  // word_phase == 1'b1
-                                // Phase 1: combine buffered + current word → 64-bit output
-                                // Check if we have enough bytes left for a second word
-                                // or if this is the final partial 64-bit word
+                                // Phase 1: combine buffered high + current low → 64-bit output
+                                // Check if we have enough bytes left for a low word
+                                // or if this is the final partial 64-bit word (1-4 bytes)
                                 if (in_head_valid && bytes_remaining >= 5) begin
-                                    // Have at least 5 bytes left: normal 64-bit word with second FIFO word
-                                    // (word_buffer holds low 32, in_fifo_rdata holds high 32)
+                                    // Have at least 5 bytes left: normal 64-bit word with low FIFO word
+                                    // (word_buffer holds high 32, in_fifo_rdata holds low 32)
                                     // in_rd_ptr advances automatically via in_pop signal
                                     word_phase <= 1'b0;  // reset for next pair
 
@@ -400,9 +400,9 @@ module sha3_wb
                                     end
 
                                 end else if (bytes_remaining >= 1 && bytes_remaining <= 4) begin
-                                    // Have 1-4 bytes left: only buffered word has valid data
-                                    // High 32 bits are zeros (no second word from FIFO)
-                                    // Send buffered word + zeros as a partial 64-bit word with is_last=1
+                                    // Have 1-4 bytes left: buffered high word has valid data
+                                    // Low 32 bits are zeros (no second word from FIFO)
+                                    // Send buffered high word + zeros as a partial 64-bit word with is_last=1
                                     word_phase     <= 1'b0;
                                     bytes_ingested <= msg_len;
                                     state          <= S_WAIT_HASH;

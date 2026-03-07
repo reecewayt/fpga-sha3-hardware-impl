@@ -151,11 +151,11 @@ struct KeccakStub {
     //   The controller loads:   out_fifo[i] <= sha3_hash_in[511 - 32*i -: 32]
     //   In Verilator:           sha3_hash_in[15-i] corresponds to out_fifo[i]
     // Each 64-bit stored word = {high32, low32} splits into 2x32-bit output words.
-    // stored_words64[0] = {words[1], words[0]} (little-endian pairing from WB writes)
+    // stored_words64[0] = {words[0], words[1]} (WB pairing: first write=high).
     // We want: out_fifo[0]=words[0], out_fifo[1]=words[1], preserving write order.
     // Mapping:
-    //   out_fifo[2*i]   = low 32 of stored_words64[i]   →  sha3_hash_in[15-2*i]
-    //   out_fifo[2*i+1] = high 32 of stored_words64[i]  →  sha3_hash_in[14-2*i]
+    //   out_fifo[2*i]   = high 32 of stored_words64[i]  →  sha3_hash_in[15-2*i]
+    //   out_fifo[2*i+1] = low 32 of stored_words64[i]   →  sha3_hash_in[14-2*i]
     void fill_hash_in() {
         // Clear all first
         for (int i = 0; i < MAX_WORDS32; i++) {
@@ -164,13 +164,13 @@ struct KeccakStub {
         // Fill with stored data
         for (int i = 0; i < word_count && i < MAX_WORDS64; i++) {
             uint64_t w64 = stored_words64[i];
-            uint32_t low = (uint32_t)(w64 & 0xFFFFFFFFull);
             uint32_t high = (uint32_t)(w64 >> 32);
+            uint32_t low = (uint32_t)(w64 & 0xFFFFFFFFull);
             int idx_low = 15 - 2*i;
             int idx_high = 14 - 2*i;
 
-            dut->sha3_hash_in[idx_low] = low;   // even out_fifo indices
-            dut->sha3_hash_in[idx_high] = high;  // odd out_fifo indices
+            dut->sha3_hash_in[idx_low] = high;   // even out_fifo indices
+            dut->sha3_hash_in[idx_high] = low;   // odd out_fifo indices
         }
     }
 };
