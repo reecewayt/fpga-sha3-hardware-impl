@@ -49,24 +49,23 @@ module f_permutation (
     // the register is advanced to 1 so that the first calc cycle uses rc[1].
     // If more blocks are coming after done, reset to 0 for next block.
     always_ff @(posedge clk) begin
-
-        // Acknowledge more blocks pending if in done state
-        if (rnd_idx == 5'd21) 
-            ack_more_blks <= 1'b1;
-        else 
-            ack_more_blks <= 1'b0;
-
         if (reset) begin
             rnd_idx <= '0;
-            ack_more_blks <= 1'b0;
         end else if (accept)
             rnd_idx <= 5'd1;  // rc[0] used this cycle; next cycle starts at rc[1]
-        else if (calc)
+        else if (calc & ~done)
             rnd_idx <= rnd_idx + 5'd1;
-        else if (done & more_blks) begin
+        else if (done & more_blks)
             rnd_idx <= 5'd0;  // Reset for next block
-            ack_more_blks <= 1'b1; // Pulse ack to indicate done and more blocks pending
-        end
+    end
+
+    // Pulse acknowledgement only when a block has actually completed and
+    // another block is pending.
+    always_ff @(posedge clk) begin
+        if (reset)
+            ack_more_blks <= 1'b0;
+        else
+            ack_more_blks <= done & more_blks;
     end
     
     

@@ -29,6 +29,7 @@ module padder (
     state_t       state;
     logic [63:0]  in_switch;
     logic         next_buffer_full;
+    logic         accept_last_word;
 
     // --- buffer_full: one hot position depends on rate ---
     // 64-bit words: SHA3-224=18 words, SHA3-256=17, SHA3-384=13, SHA3-512=9
@@ -56,6 +57,7 @@ module padder (
 
     assign out_ready         = buffer_full;
     assign accept_user_input = (state == S_FILL) & in_ready & ~buffer_full;
+    assign accept_last_word  = accept_user_input & is_last;
     assign update_shift      = (accept_user_input | ((state == S_PAD) & ~buffer_full)) & ~done;
 
     // --- padding word selection ---
@@ -64,7 +66,7 @@ module padder (
     //   2. state == S_PAD                         → zero fill / closing sentinel
     //   3. normal data word
     always_comb begin
-        priority if (is_last) begin
+        priority if (accept_last_word) begin
             // last data word — input is byte-swapped by keccak.sv so valid
             // bytes occupy the LSB lanes; 0x06 suffix goes immediately above them
             unique case (byte_num)
@@ -111,7 +113,7 @@ module padder (
     always_ff @(posedge clk) begin
         if (reset)
             state <= S_FILL;
-        else if (is_last)
+        else if (accept_last_word)
             state <= S_PAD;
     end
 
@@ -124,14 +126,15 @@ module padder (
     end
 
     // --- more_blks flag ---
-    // Latch high when first data is accepted into padder.
-    // Latch low only when padder is done and f_permutation acknowledges (f_ack pulse).
+    // Latch high when first transfer is accepted into padder.
+    // Clear when the final (S_PAD) block is accepted by f_permutation.
+    // Using state instead of done avoids same-cycle done/f_ack race timing.
     always_ff @(posedge clk) begin
         if (reset)
             more_blks_ff <= 1'b0;
-        else if (ack_more_blks & done)
+        else if (f_ack & (state == S_PAD))
             more_blks_ff <= 1'b0;
-        else if (in_ready)
+        else if (accept_user_input)
             more_blks_ff <= 1'b1;
     end
 
