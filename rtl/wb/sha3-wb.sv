@@ -19,17 +19,24 @@
       0x18  MSG_LEN_LO    R/W  Low 32 bits of message length (bytes)
       0x1C  MSG_LEN_HI    R/W  High 32 bits of message length (bytes)
 
-    SHA3 Core Interface (maps to keccak.v ports):
-      sha3_data_out  → in[31:0]
-      sha3_num_bytes → byte_num[1:0]  (valid bytes when sha3_is_last=1; 0=none/padding)
+    SHA3 Core Interface (maps to keccak.sv ports):
+      sha3_data_out  → in[63:0]        (64-bit, paired from two 32-bit WB writes)
+      sha3_num_bytes → byte_num[2:0]   (0-7 valid bytes, 0 = 8 bytes full word)
+      sha3_variant   → variant[1:0]    (SHA3 variant from MODE bits)
       sha3_out_rdy   → in_ready
       sha3_is_last   → is_last
       sha3_buff_full ← buffer_full
       sha3_hash_in   ← out[511:0]
       sha3_hash_rdy  ← out_ready
-      sha3_reset     → reset   (added port)
+      sha3_reset     → reset
+
+    Word Pairing: WB is 32-bit but keccak expects 64-bit words. The module
+    internally buffers consecutive 32-bit writes and combines them into 64-bit
+    words before sending to the keccak core (little-endian: first write = low 32).
 
 */
+
+import sha3_pkg::*;
 
 module sha3_wb
 #(
@@ -57,8 +64,9 @@ module sha3_wb
     // ----------------------------------------------------------------
     // SHA3 / Keccak core interface
     // ----------------------------------------------------------------
-    output logic [dw-1:0]           sha3_data_out,   // in[31:0]
-    output logic [1:0]              sha3_num_bytes,  // byte_num
+    output logic [63:0]             sha3_data_out,   // in[63:0] - paired 32-bit words
+    output logic [2:0]              sha3_num_bytes,  // byte_num[2:0] (0-7, 0=8 bytes)
+    output sha3_variant_t           sha3_variant,    // variant selection
     output logic                    sha3_out_rdy,    // in_ready
     output logic                    sha3_is_last,    // is_last
     output logic                    sha3_reset,      // reset
@@ -109,6 +117,9 @@ module sha3_wb
     wire ctrl_abort = ctrl_reg[2];
     wire [1:0] ctrl_mode = ctrl_reg[4:3];
 
+    // Variant mapping (MODE bits directly map to sha3_variant_t encoding)
+    assign sha3_variant = sha3_variant_t'(ctrl_mode);
+
     // ================================================================
     // Error / status latches
     // ================================================================
@@ -144,15 +155,29 @@ module sha3_wb
 
     // Pre-compute next-cycle pointer values so the BRAM read address
     // is issued one cycle ahead, absorbing the BRAM read latency.
-    // in_pop  : a word will be consumed from the FIFO this clock
+    // in_pop  : a 32-bit word will be consumed from the FIFO this clock
     // in_push : a word will be written into the FIFO this clock
+    // Pop policy:
+    //   - phase 0 (word_phase=0): consume first 32-bit word whenever available
+    //   - phase 1 (word_phase=1): consume second 32-bit word only when >=5 bytes remain
+    //     (for 1-4 byte tail we send buffered low word + zero high word, no second pop)
     wire in_pop  = (state == S_ABSORB) && !sha3_buff_full && !final_pulse &&
-                   in_head_valid && (bytes_remaining >= 1);
+                   (((word_phase == 1'b0) && in_head_valid && (bytes_remaining >= 1)) ||
+                    ((word_phase == 1'b1) && in_head_valid && (bytes_remaining >= 5)));
     wire in_push = wb_cyc_i && wb_stb_i && !wb_ack_o && wb_we_i &&
                    (wb_adr_i[5:2] == 4'h2) && !in_fifo_full;
     wire [IFW-1:0] in_rd_ptr_nxt = in_rd_ptr + {{(IFW-1){1'b0}}, in_pop};
     wire [IFW-1:0] in_wr_ptr_nxt = in_wr_ptr + {{(IFW-1){1'b0}}, in_push};
     wire           in_empty_nxt  = (in_rd_ptr_nxt == in_wr_ptr_nxt);
+
+    // ================================================================
+    // Word-pairing buffer: combine two 32-bit words into 64-bit
+    //   word_phase = 0: waiting for/buffering low 32 bits (first word)
+    //   word_phase = 1: have buffered word, current FIFO head is high 32 bits
+    //   sha3_data_out = {in_fifo_rdata[31:0], word_buffer[31:0]} (little-endian)
+    // ================================================================
+    logic [31:0] word_buffer;  // holds first word of the pair
+    logic        word_phase;   // 0=low word, 1=high word ready
 
     // ================================================================
     // Output FIFO — implemented as registers (not BRAM).
@@ -174,9 +199,9 @@ module sha3_wb
     // ================================================================
     // Byte ingestion counter & final-padding pulse logic
     //
-    //  bytes_ingested counts bytes sent to the keccak core.
+    //  bytes_ingested counts bytes sent to the keccak core (in 8-byte increments).
     //  final_pulse    is set when all message bytes have been absorbed
-    //                 and msg_len is a multiple of 4 (so we need one
+    //                 and msg_len is a multiple of 8 (so we need one
     //                 extra is_last / byte_num=0 clock of in_ready).
     // ================================================================
     logic [63:0] bytes_ingested;
@@ -184,20 +209,14 @@ module sha3_wb
 
     wire [63:0] bytes_remaining = msg_len - bytes_ingested;
 
-    // Is the current FIFO head the last data word?
-    //   True when bytes_remaining is 1-3 (partial final word).
-    //   bytes_remaining == 4 is a full word sent with is_last=0, followed by
+    // Is the current 64-bit word pair the last data word?
+    //   True when bytes_remaining is 1-7 (partial final word).
+    //   bytes_remaining == 8 is a full 64-bit word sent with is_last=0, followed by
     //   a zero-byte final_pulse on the next cycle.
     //   bytes_remaining == 0 is handled exclusively via final_pulse.
     wire is_last_data_word = !final_pulse &&
                              (bytes_remaining >= 64'd1) &&
-                             (bytes_remaining <= 64'd3);
-
-    // sha3_num_bytes: 0 = no data bytes (padding only), 1-3 = partial bytes.
-    //   For is_last=0 the core ignores this field (all 4 bytes consumed).
-    //   When bytes_remaining % 4 == 0 (and > 0) the word is sent with is_last=0,
-    //   then a zero-byte final_pulse follows.
-    wire [1:0] last_byte_num = msg_len[1:0]; // 0 → 0 bytes (full multiple), 1-3 → partial
+                             (bytes_remaining <= 64'd7);
 
     // ================================================================
     // BRAM synchronous read port for input FIFO.
@@ -211,20 +230,31 @@ module sha3_wb
     // ================================================================
     // SHA3 core combinational drive
     // ================================================================
-    // Head word comes from the BRAM prefetch register, not the array directly
-    assign sha3_data_out  = in_fifo_rdata;
+    // Paired 64-bit word: {current FIFO head (high 32), buffered word (low 32)}
+    // When no second word is available (bytes_remaining <= 4), use zeros for high 32
+    wire [31:0] high_word = (in_head_valid && bytes_remaining >= 5) ? in_fifo_rdata[31:0] : 32'h0;
+    assign sha3_data_out  = {high_word, word_buffer[31:0]};
 
-    // byte_num: 0 during final_pulse (no data); last_byte_num when last data word
-    assign sha3_num_bytes = final_pulse ? 2'b00 : last_byte_num;
+    // byte_num: 0-7 valid bytes (0 = 8 bytes = full 64-bit word)
+    //   - final_pulse: 0 bytes (padding only)
+    //   - last data: bytes_remaining % 8 (1-7 for partial, 0 for full final word)
+    wire [2:0] last_byte_num = msg_len[2:0];  // 0-7: 0 = 8 bytes, 1-7 = partial
+    assign sha3_num_bytes = final_pulse ? 3'b000 : last_byte_num;
 
-    // in_ready: assert when BRAM prefetch holds a valid head AND there are
-    //           bytes left, OR a final zero-byte padding pulse is pending
+    // in_ready:
+    //   - phase 1, bytes 5..N: require second word valid in prefetch register
+    //   - phase 1, bytes 1..4: send buffered low word + zero high word
+    //   - final_pulse: zero-byte final padding beat
     assign sha3_out_rdy   = (state == S_ABSORB) && !sha3_buff_full &&
-                            (in_head_valid && bytes_remaining >= 1 || final_pulse);
+                            ((word_phase && (bytes_remaining >= 5) && in_head_valid) ||
+                             (word_phase && (bytes_remaining >= 1) && (bytes_remaining <= 4)) ||
+                             final_pulse);
 
-    // is_last: assert on last data word (held in prefetch reg) or on final_pulse
+        // is_last: assert on final partial data word or final zero-byte pulse
     assign sha3_is_last   = (state == S_ABSORB) && !sha3_buff_full &&
-                            (is_last_data_word && in_head_valid || final_pulse);
+                                                        ((is_last_data_word && word_phase &&
+                                                            ((bytes_remaining <= 4) || in_head_valid)) ||
+                                                         final_pulse);
 
     // Core reset: synchronous reset from system reset or SW ABORT bit
     assign sha3_reset     = wb_rst_i | ctrl_abort;
@@ -242,6 +272,8 @@ module sha3_wb
             in_rd_ptr              <= '0;
             in_data_available      <= 1'b0;
             in_head_valid          <= 1'b0;
+            word_buffer            <= '0;
+            word_phase             <= 1'b0;
             out_wr_cnt             <= '0;
             out_rd_ptr             <= '0;
             bytes_ingested         <= '0;
@@ -273,6 +305,8 @@ module sha3_wb
                 in_rd_ptr              <= '0;
                 in_data_available      <= 1'b0;
                 in_head_valid          <= 1'b0;
+                word_buffer            <= '0;
+                word_phase             <= 1'b0;
                 out_wr_cnt             <= '0;
                 out_rd_ptr             <= '0;
                 bytes_ingested         <= '0;
@@ -292,6 +326,7 @@ module sha3_wb
                 if (in_pop) begin
                     in_data_available <= 1'b0;  // force pipeline bubble after pop
                     in_head_valid     <= 1'b0;
+                    in_rd_ptr         <= in_rd_ptr + 1'b1;
                 end else begin
                     in_data_available <= !in_empty_nxt;
                     in_head_valid     <= in_data_available;
@@ -307,12 +342,13 @@ module sha3_wb
                             // Transition to absorption
                             state          <= S_ABSORB;
                             bytes_ingested <= '0;
+                            word_phase     <= 1'b0;  // start with low word
                             out_wr_cnt     <= '0;
                             out_rd_ptr     <= '0;
                             // For an empty message (msg_len==0) fire the
                             // zero-byte is_last padding pulse immediately.
-                            // For non-zero multiples of 4, final_pulse is set
-                            // in S_ABSORB after the last full word is consumed.
+                            // For non-zero multiples of 8, final_pulse is set
+                            // in S_ABSORB after the last full 64-bit word is consumed.
                             final_pulse    <= (msg_len == '0);
                         end
                     end
@@ -330,29 +366,46 @@ module sha3_wb
                                 final_pulse <= 1'b0;
                                 state       <= S_WAIT_HASH;
 
-                            end else if (in_head_valid && bytes_remaining >= 1) begin
-                                // Pop next data word — keccak has accepted in_fifo_rdata
-                                // (driven by sha3_data_out).  Advance rd_ptr; BRAM will
-                                // deliver in_fifo[new ptr] into in_fifo_rdata next cycle.
-                                in_rd_ptr <= in_rd_ptr + 1'b1;
+                            end else if (word_phase == 1'b0) begin
+                                // Phase 0: buffer the low 32 bits (first word of pair)
+                                if (in_head_valid && bytes_remaining >= 1) begin
+                                    word_buffer <= in_fifo_rdata;
+                                    word_phase  <= 1'b1;
+                                    // in_rd_ptr advances automatically via in_pop signal
+                                end
 
-                                if (is_last_data_word) begin
-                                    // Partial final word (1-3 valid bytes).
-                                    // is_last=1 was already driven combinationally;
-                                    // transition to waiting for the digest.
+                            end else begin  // word_phase == 1'b1
+                                // Phase 1: combine buffered + current word → 64-bit output
+                                // Check if we have enough bytes left for a second word
+                                // or if this is the final partial 64-bit word
+                                if (in_head_valid && bytes_remaining >= 5) begin
+                                    // Have at least 5 bytes left: normal 64-bit word with second FIFO word
+                                    // (word_buffer holds low 32, in_fifo_rdata holds high 32)
+                                    // in_rd_ptr advances automatically via in_pop signal
+                                    word_phase <= 1'b0;  // reset for next pair
+
+                                    if (is_last_data_word) begin
+                                        // Partial final 64-bit word (5-7 valid bytes total)
+                                        bytes_ingested <= msg_len;
+                                        state          <= S_WAIT_HASH;
+                                    end else begin
+                                        // Full 8-byte word sent with is_last=0
+                                        bytes_ingested <= bytes_ingested + 64'd8;
+
+                                        // If this was the last full 64-bit word (msg_len % 8 == 0),
+                                        // arm the zero-byte final padding pulse for next cycle
+                                        if ((bytes_ingested + 64'd8) == msg_len) begin
+                                            final_pulse <= 1'b1;
+                                        end
+                                    end
+
+                                end else if (bytes_remaining >= 1 && bytes_remaining <= 4) begin
+                                    // Have 1-4 bytes left: only buffered word has valid data
+                                    // High 32 bits are zeros (no second word from FIFO)
+                                    // Send buffered word + zeros as a partial 64-bit word with is_last=1
+                                    word_phase     <= 1'b0;
                                     bytes_ingested <= msg_len;
                                     state          <= S_WAIT_HASH;
-
-                                end else begin
-                                    // Full 4-byte word sent with is_last=0.
-                                    bytes_ingested <= bytes_ingested + 64'd4;
-
-                                    // If this was the last full word of a
-                                    // multiple-of-4 message, arm the zero-byte
-                                    // final padding pulse for the next cycle.
-                                    if ((bytes_ingested + 64'd4) == msg_len) begin
-                                        final_pulse <= 1'b1;
-                                    end
                                 end
                             end
                         end

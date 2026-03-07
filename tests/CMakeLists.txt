@@ -41,8 +41,9 @@ function(add_sha3_wb_fifo_test TEST_NAME FIFO_DEPTH)
     add_executable(${TEST_NAME} tb_sha3_wb.cpp)
     target_compile_definitions(${TEST_NAME} PRIVATE TEST_FIFO_DEPTH=${FIFO_DEPTH})
     verilate(${TEST_NAME}
-        SOURCES ${RTL_DIR}/wb/sha3-wb.sv
+        SOURCES ${RTL_DIR}/sha3_pkg.sv ${RTL_DIR}/wb/sha3-wb.sv
         TOP_MODULE sha3_wb
+        PREFIX Vsha3_wb
         VERILATOR_ARGS --timing -GFIFO_DEPTH=${FIFO_DEPTH}
     )
     add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})

@@ -280,6 +280,44 @@ static inline void sha3_write_words(const uint32_t *words, size_t n) {
 }
 
 /* -------------------------------------------------------------------------
+ * sha3_pack_u32_le()
+ *
+ * Pack up to 4 bytes into one 32-bit word using little-endian byte order:
+ *   word[7:0]   = b0
+ *   word[15:8]  = b1
+ *   word[23:16] = b2
+ *   word[31:24] = b3
+ *
+ * This lets firmware iterate through a byte/string buffer naturally
+ * (index 0..N-1) and stream it to IN_FIFO_DATA in 32-bit chunks.
+ * ------------------------------------------------------------------------- */
+static inline uint32_t sha3_pack_u32_le(const uint8_t *p, size_t n) {
+    uint32_t w = 0;
+    if (n > 0) w |= (uint32_t)p[0] << 0;
+    if (n > 1) w |= (uint32_t)p[1] << 8;
+    if (n > 2) w |= (uint32_t)p[2] << 16;
+    if (n > 3) w |= (uint32_t)p[3] << 24;
+    return w;
+}
+
+/* -------------------------------------------------------------------------
+ * sha3_write_bytes()
+ *
+ * Stream a byte buffer directly to the input FIFO by packing every 4 bytes
+ * into one 32-bit word (little-endian).  The final partial word is
+ * zero-padded in unused byte lanes.
+ *
+ * IMPORTANT: call sha3_set_msglen(len) with the exact byte count before START.
+ * ------------------------------------------------------------------------- */
+static inline void sha3_write_bytes(const uint8_t *data, size_t len) {
+    for (size_t i = 0; i < len; i += 4) {
+        size_t rem = len - i;
+        size_t n = (rem >= 4) ? 4 : rem;
+        sha3_write_word(sha3_pack_u32_le(&data[i], n));
+    }
+}
+
+/* -------------------------------------------------------------------------
  * sha3_wait_done()
  *
  * Block until STATUS.DONE is set (digest ready in output FIFO).
@@ -340,6 +378,31 @@ RESET → SET MODE → SET MSG_LEN → WRITE DATA → START → WAIT DONE → RE
 > FIFO drains immediately. The total bytes written via `IN_FIFO_DATA` **must
 > exactly match** `MSG_LEN`; mismatch will cause an incorrect digest or a
 > stalled FSM.
+
+### Byte-Stream Helper and Ordering (`"ABC"` example)
+
+Yes, you can iterate through a normal C string/byte array and write each 32-bit
+chunk to `IN_FIFO_DATA`.
+
+- Firmware writes 32-bit words in order (`word0`, `word1`, ...).
+- Hardware pairs them into 64-bit beats internally before keccak.
+- `MSG_LEN` defines how many bytes are valid in the last beat.
+
+Example for `"ABC"` (`0x41 0x42 0x43`):
+
+```c
+const uint8_t msg[] = { 'A', 'B', 'C' };
+
+sha3_reset();
+sha3_set_mode(SHA3_MODE_256);
+sha3_set_msglen(sizeof(msg));
+sha3_write_bytes(msg, sizeof(msg));   /* writes one word: 0x00434241 */
+sha3_start();
+sha3_wait_done();
+```
+
+In other words: iterate bytes normally, pack into 32-bit little-endian words,
+write to `0x08`, and let the WB module do the 64-bit chunking automatically.
 
 ---
 
