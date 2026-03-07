@@ -267,14 +267,38 @@ def main():
             tv = generate_test_vector(name, description, variant, msg_bytes)
             test_vectors.append(tv)
         
-        # Add variant-specific test: exactly 3 blocks (2 full blocks + 1 padding block)
-        # Message length = 2 * rate_bytes exactly
+        # Add variant-specific tests: exact-boundary cases
         variant_num = variant.name.split('_')[1]
-        exact_3blk_bytes = 2 * variant.rate_words * 8
-        exact_3blk_msg = b"X" * exact_3blk_bytes
-        name = f"sha3_{variant_num}_exact_3blk"
-        description = f"Exactly 3 blocks: {exact_3blk_bytes} bytes (2 full blocks + padding)"
-        tv = generate_test_vector(name, description, variant, exact_3blk_msg)
+        rate_bytes = variant.rate_words * 8
+        
+        # Test 1: Single-block exact fit (no overflow)
+        # Message fills block with data, padding (0x06 + zeros + 0x80) fits in same block
+        # Message length = rate_bytes - 2 (leaves room for 0x06...0x80)
+        exact_1blk_bytes = rate_bytes - 2
+        exact_1blk_msg = b"X" * exact_1blk_bytes
+        name = f"sha3_{variant_num}_exact_1blk_no_overflow"
+        description = f"Exact 1-block boundary (no overflow): {exact_1blk_bytes} bytes of data + padding fits in 1 block"
+        tv = generate_test_vector(name, description, variant, exact_1blk_msg)
+        test_vectors.append(tv)
+        
+        # Test 2: Two-block exact fit (no overflow)
+        # Message fills 1.5 blocks, padding wraps to exactly fill block 2
+        # Message length = 2*rate_bytes - 2
+        exact_2blk_bytes = 2 * rate_bytes - 2
+        exact_2blk_msg = b"Y" * exact_2blk_bytes
+        name = f"sha3_{variant_num}_exact_2blk_no_overflow"
+        description = f"Exact 2-block boundary (no overflow): {exact_2blk_bytes} bytes of data + padding fits in 2 blocks"
+        tv = generate_test_vector(name, description, variant, exact_2blk_msg)
+        test_vectors.append(tv)
+        
+        # Test 3: Two-block input with padding overflow to third block
+        # Message fills exactly 2 full blocks, padding requires a 3rd block
+        # Message length = 2 * rate_bytes exactly
+        exact_overflow_bytes = 2 * rate_bytes
+        exact_overflow_msg = b"Z" * exact_overflow_bytes
+        name = f"sha3_{variant_num}_exact_2blk_overflow_to_3blk"
+        description = f"Exact 2-block input, padding overflows to 3rd block: {exact_overflow_bytes} bytes of data forces 3-block total"
+        tv = generate_test_vector(name, description, variant, exact_overflow_msg)
         test_vectors.append(tv)
     
     # Generate and write the header file
@@ -283,10 +307,10 @@ def main():
     try:
         with open(args.output, 'w') as f:
             f.write(header_content)
-        num_msgs = len(all_messages) + 1  # +1 for variant-specific exact_3blk
+        num_msgs = len(all_messages) + 3  # +3 for variant-specific exact_1blk, exact_2blk, exact_3blk
         print(f"✓ Generated {len(test_vectors)} test vectors in {args.output}")
         print(f"  - {len(VARIANTS)} SHA3 variants")
-        print(f"  - {num_msgs} message types per variant")
+        print(f"  - {num_msgs} message types per variant (including 3 exact-boundary tests)")
     except IOError as e:
         print(f"✗ Error writing to {args.output}: {e}", file=sys.stderr)
         sys.exit(1)

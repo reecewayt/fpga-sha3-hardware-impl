@@ -454,12 +454,15 @@ int main(int argc, char** argv) {
     };
 
     const EdgeVariantCase edge_cases[] = {
-        {"sha3_224", "sha3_224_exact_3blk"},
-        {"sha3_256", "sha3_256_exact_3blk"},
-        {"sha3_384", "sha3_384_exact_3blk"},
-        {"sha3_512", "sha3_512_exact_3blk"},
+        {"sha3_224", "sha3_224_exact_2blk_overflow_to_3blk"},
+        {"sha3_256", "sha3_256_exact_2blk_overflow_to_3blk"},
+        {"sha3_384", "sha3_384_exact_2blk_overflow_to_3blk"},
+        {"sha3_512", "sha3_512_exact_2blk_overflow_to_3blk"},
     };
 
+    // Edge protocol tests only apply to full-word-boundary vectors (overflow case).
+    // no_overflow cases are already covered by nominal tests.
+    // 2 edge protocol tests × 1 overflow-boundary type × 4 variants = 8 edge tests
     total_tests += 2 * static_cast<int>(sizeof(edge_cases) / sizeof(edge_cases[0]));
 
     for (const auto& ec : edge_cases) {
@@ -470,8 +473,10 @@ int main(int argc, char** argv) {
             continue;
         }
 
+        std::string base_name = std::string(ec.name) + "_overflow";
+
         if (tb.run_full_last_edge_test(*edge_tv,
-                                       std::string("edge_full_last_early_is_last_then_retry_") + ec.name,
+                                       std::string("edge_premature_is_last_") + base_name,
                                        false)) {
             passed++;
         } else {
@@ -479,7 +484,7 @@ int main(int argc, char** argv) {
         }
 
         if (tb.run_full_last_edge_test(*edge_tv,
-                                       std::string("edge_full_last_spurious_nonlast_while_full_") + ec.name,
+                                       std::string("edge_spurious_nonlast_") + base_name,
                                        true)) {
             passed++;
         } else {
