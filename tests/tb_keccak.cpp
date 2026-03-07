@@ -4,7 +4,6 @@
 
 #include <iostream>
 #include <iomanip>
-#include <sstream>
 #include <vector>
 #include <string>
 #include "Vkeccak.h"
@@ -161,7 +160,21 @@ public:
             tick();
 
             // For a full last word, send the terminating is_last transaction.
+            // Regression note: for exact-rate endings (e.g. SHA3-512 2 full
+            // blocks + padding-only block), asserting trailing is_last while
+            // buffer_full is still high can miss the pulse and drop the extra
+            // padding block request.
             if (is_last_word && tv.remaining_bytes == 0) {
+                // If the final full data word filled a rate block, wait until
+                // padder can accept the trailing is_last pulse that requests
+                // the extra padding-only block (0x06 ... 0x80).
+                int pad_stall = 0;
+                while (dut->buffer_full && pad_stall < 400) { tick(); pad_stall++; }
+                if (pad_stall >= 400) {
+                    std::cerr << "[ERROR] buffer_full stuck high before trailing is_last\n";
+                    return;
+                }
+
                 std::cout << "    (trailing is_last, byte_num=0)\n";
                 dut->in       = 0;
                 dut->in_ready = 1;
@@ -177,28 +190,34 @@ public:
 
     // -----------------------------------------------------------------------
     // Compare the DUT digest output against expected words.
-    // The keccak module places the N-bit digest in out[N-1:0] (zero-extended
-    // into the wider MAX_RATE port).  In Verilator's word array:
-    //   digest word i  →  dut->out[digest_words - 1 - i]
+    // The keccak module outputs 512 bits on out[511:0].
+    // In Verilator: dut->out[15] = bits [511:480], dut->out[0] = bits [31:0]
+    // The hash digest is placed at the MSB end for all variants:
+    //   SHA3-224: out[511:224] contains digest (8 words at indices 15..8)
+    //   SHA3-256: out[511:256] contains digest (8 words at indices 15..8)
+    //   SHA3-384: out[511:0] contains digest (16 words, all indices)
+    //   SHA3-512: out[511:0] contains digest (16 words, all indices)
+    // Correct indexing: digest_word[i] = dut->out[15 - i]
     // -----------------------------------------------------------------------
     bool verify_digest(const SHA3NISTVector& tv) {
         uint32_t dw   = digest_words(tv.variant);
         bool     pass = true;
 
-        std::cout << "\n  Expected digest (" << variant_name(tv.variant) << "):\n  ";
+        std::cout << "\n  Expected digest (" << variant_name(tv.variant) << "):\n    ";
         for (uint32_t i = 0; i < dw; i++)
             std::cout << std::hex << std::setw(8) << std::setfill('0')
                       << tv.expected_digest[i] << " ";
-        std::cout << "\n  Got:\n  ";
+        std::cout << "\n  Got:\n    ";
 
         for (uint32_t i = 0; i < dw; i++) {
-            uint32_t actual = dut->out[dw - 1 - i];
+            uint32_t actual = dut->out[15 - i];
             std::cout << std::hex << std::setw(8) << std::setfill('0') << actual << " ";
         }
         std::cout << "\n";
 
+        // Compare using correct MSB-first indexing
         for (uint32_t i = 0; i < dw; i++) {
-            uint32_t actual   = dut->out[dw - 1 - i];
+            uint32_t actual   = dut->out[15 - i];
             uint32_t expected = tv.expected_digest[i];
             if (actual != expected) {
                 std::cout << "  [MISMATCH] word[" << i << "]: expected 0x"
@@ -251,7 +270,142 @@ public:
 
         return pass;
     }
+
+    // -----------------------------------------------------------------------
+    // Run a full-word boundary edge test:
+    //  1) Send premature trailing is_last while buffer_full is still high.
+    //  2) Optionally send one extra non-last pulse while still full.
+    //  3) Retry trailing is_last after buffer_full deasserts.
+    // The digest must still match the vector.
+    // -----------------------------------------------------------------------
+    bool run_full_last_edge_test(const SHA3NISTVector& tv,
+                                 const std::string& test_name,
+                                 bool inject_spurious_nonlast_while_full) {
+        std::cout << "\n----------------------------------------\n";
+        std::cout << "[" << test_name << "]\n";
+        std::cout << "Protocol robustness around full-block terminal handshake\n";
+        std::cout << "Base vector: " << tv.name << "\n";
+        std::cout << "----------------------------------------\n";
+
+        if (tv.input_words.empty() || tv.remaining_bytes != 0) {
+            std::cout << "[FAIL] " << test_name
+                      << " - requires non-empty vector with full last word\n";
+            return false;
+        }
+
+        reset_dut();
+        dut->variant = static_cast<uint8_t>(tv.variant);
+        tick();
+
+        std::cout << "  Feeding " << tv.input_words.size() << " word(s)...\n";
+
+        for (size_t i = 0; i < tv.input_words.size(); i++) {
+            bool is_last_word = (i == tv.input_words.size() - 1);
+
+            int stall = 0;
+            while (dut->buffer_full && stall < 200) { tick(); stall++; }
+            if (stall >= 200) {
+                std::cerr << "[ERROR] buffer_full stuck high\n";
+                return false;
+            }
+
+            dut->in       = tv.input_words[i];
+            dut->in_ready = 1;
+            dut->is_last  = 0;
+            dut->byte_num = 7;
+
+            std::cout << "    word[" << i << "] = 0x"
+                      << std::hex << std::setw(16) << std::setfill('0')
+                      << tv.input_words[i]
+                      << (is_last_word ? " (full word, edge-injected is_last follows)\n"
+                                       : "\n")
+                      << std::dec;
+
+            tick();
+            dut->in_ready = 0;
+            dut->is_last  = 0;
+            tick();
+
+            if (is_last_word) {
+                // Intentionally violate handshake once: issue trailing is_last
+                // without waiting for buffer_full to clear.
+                std::cout << "    (premature trailing is_last while full may still be high)\n";
+                dut->in       = 0;
+                dut->in_ready = 1;
+                dut->is_last  = 1;
+                dut->byte_num = 0;
+                tick();
+                dut->in_ready = 0;
+                dut->is_last  = 0;
+                tick();
+
+                bool sent_spurious = false;
+                int pad_stall = 0;
+                while (dut->buffer_full && pad_stall < 400) {
+                    if (inject_spurious_nonlast_while_full && !sent_spurious) {
+                        std::cout << "    (spurious non-last pulse while full)\n";
+                        dut->in       = 0xDEADBEEFCAFEBABEULL;
+                        dut->in_ready = 1;
+                        dut->is_last  = 0;
+                        dut->byte_num = 7;
+                        tick();
+                        dut->in_ready = 0;
+                        tick();
+                        sent_spurious = true;
+                    } else {
+                        tick();
+                    }
+                    pad_stall++;
+                }
+
+                if (pad_stall >= 400) {
+                    std::cerr << "[ERROR] buffer_full stuck high before retry trailing is_last\n";
+                    return false;
+                }
+
+                // Retry trailing is_last once padder can accept it.
+                std::cout << "    (retry trailing is_last, byte_num=0)\n";
+                dut->in       = 0;
+                dut->in_ready = 1;
+                dut->is_last  = 1;
+                dut->byte_num = 0;
+                tick();
+                dut->in_ready = 0;
+                dut->is_last  = 0;
+                tick();
+            }
+        }
+
+        const int MAX_WAIT = 2000;
+        int cycles = 0;
+        while (!dut->out_ready && cycles < MAX_WAIT) {
+            tick();
+            cycles++;
+        }
+
+        if (cycles >= MAX_WAIT) {
+            std::cout << "[FAIL] " << test_name << " - timeout waiting for out_ready\n";
+            return false;
+        }
+
+        std::cout << "  out_ready after " << cycles << " cycles\n";
+
+        bool pass = verify_digest(tv);
+        if (pass)
+            std::cout << "[PASS] " << test_name << "\n";
+        else
+            std::cout << "[FAIL] " << test_name << "\n";
+
+        return pass;
+    }
 };
+
+static const SHA3NISTVector* find_vector_by_name(const std::string& name) {
+    for (const auto& tv : SHA3_NIST_VECTORS) {
+        if (tv.name == name) return &tv;
+    }
+    return nullptr;
+}
 
 // ---------------------------------------------------------------------------
 // main
@@ -280,15 +434,62 @@ int main(int argc, char** argv) {
     std::cout << "========================================\n";
     std::cout << "Keccak (SHA-3) Top-Level Test Suite\n";
     std::cout << "========================================\n";
+    int total_tests = static_cast<int>(SHA3_NIST_VECTORS.size());
     std::cout << "Test vectors: " << SHA3_NIST_VECTORS.size() << "\n";
 
     KeccakTestbench tb;
     if (enable_trace) tb.open_trace(trace_file);
 
     int passed = 0, failed = 0;
+    int test_num = 0;
     for (const auto& tv : SHA3_NIST_VECTORS) {
+        test_num++;
         if (tb.run_test(tv)) passed++;
         else                 failed++;
+    }
+
+    struct EdgeVariantCase {
+        const char* name;
+        const char* vector_name;
+    };
+
+    const EdgeVariantCase edge_cases[] = {
+        {"sha3_224", "sha3_224_exact_2blk_overflow_to_3blk"},
+        {"sha3_256", "sha3_256_exact_2blk_overflow_to_3blk"},
+        {"sha3_384", "sha3_384_exact_2blk_overflow_to_3blk"},
+        {"sha3_512", "sha3_512_exact_2blk_overflow_to_3blk"},
+    };
+
+    // Edge protocol tests only apply to full-word-boundary vectors (overflow case).
+    // no_overflow cases are already covered by nominal tests.
+    // 2 edge protocol tests × 1 overflow-boundary type × 4 variants = 8 edge tests
+    total_tests += 2 * static_cast<int>(sizeof(edge_cases) / sizeof(edge_cases[0]));
+
+    for (const auto& ec : edge_cases) {
+        const SHA3NISTVector* edge_tv = find_vector_by_name(ec.vector_name);
+        if (!edge_tv) {
+            std::cout << "[FAIL] edge test setup - vector " << ec.vector_name << " not found\n";
+            failed += 2;
+            continue;
+        }
+
+        std::string base_name = std::string(ec.name) + "_overflow";
+
+        if (tb.run_full_last_edge_test(*edge_tv,
+                                       std::string("edge_premature_is_last_") + base_name,
+                                       false)) {
+            passed++;
+        } else {
+            failed++;
+        }
+
+        if (tb.run_full_last_edge_test(*edge_tv,
+                                       std::string("edge_spurious_nonlast_") + base_name,
+                                       true)) {
+            passed++;
+        } else {
+            failed++;
+        }
     }
 
     if (enable_trace) {
@@ -297,8 +498,9 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "\n========================================\n";
-    std::cout << "Passed: " << passed << " / " << SHA3_NIST_VECTORS.size() << "\n";
-    std::cout << "Failed: " << failed << " / " << SHA3_NIST_VECTORS.size() << "\n";
+    std::cout << std::dec;  // Ensure decimal output
+    std::cout << "Passed: " << passed << " / " << total_tests << "\n";
+    std::cout << "Failed: " << failed << " / " << total_tests << "\n";
 
     if (failed == 0) {
         std::cout << "\n✓ ALL TESTS PASSED!\n";

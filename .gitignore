@@ -14,3 +14,8 @@ synth_reports/
 *.jou
 vivado*
 .Xil/
+*.vcd
+
+# Misc files
+.cache/
+findings

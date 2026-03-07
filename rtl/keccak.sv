@@ -44,6 +44,8 @@ module keccak (
                                              // so (i.e.) bit 7 goes to bit 0 of each byte; essentially each byte is mirrored. 
 
     logic                   padder_out_ready; // indicates when the padder has valid output to feed into the F-permutation
+    logic                   padder_done;      // indicates when padder has finished processing all blocks
+    logic                   padder_more_blks; // indicates more blocks will arrive from padder
 
     
     logic [MAX_RATE-1:0]    f_in;           // input to F-permutation, which is the output of the padder << shift logic
@@ -56,6 +58,9 @@ module keccak (
     logic [511:0]            f_out_raw;        // before reorder bytes
                                         // need to reorganize bits in each byte for 
                                         // how computer usually represents data (msb in high position) vs how keccak expects it (msb in low position)
+
+    // Interface signals
+    logic                   ack_more_blks;
 
     // Bit mirror logic
     logic [63:0]  in_switch;
@@ -115,6 +120,9 @@ module keccak (
         .buffer_full(buffer_full),
         .out(padder_out_ld),
         .out_ready(padder_out_ready),
+        .done(padder_done),
+        .more_blks(padder_more_blks),
+        .ack_more_blks(ack_more_blks),
         .f_ack(f_ack)
     );
 
@@ -134,6 +142,8 @@ module keccak (
         .reset(reset),
         .in(f_in),
         .in_ready(padder_out_ready),
+        .more_blks(padder_more_blks),
+        .ack_more_blks(ack_more_blks),
         .ack(f_ack),
         .out(f_out),
         .out_ready(f_out_ready)
