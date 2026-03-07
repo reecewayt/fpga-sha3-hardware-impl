@@ -77,17 +77,19 @@ static constexpr uint32_t ST_ERR_MASK  = ST_ERR_ILL | ST_ERR_UF | ST_ERR_OF;
 //
 // Mirrors the behaviour expected by the controller:
 //   - sha3_buff_full = 0 at all times (simplified; no internal backpressure)
-//   - Captures words when sha3_out_rdy=1 on the rising clock edge
+//   - Captures 64-bit words when sha3_out_rdy=1 on the rising clock edge
 //   - When sha3_is_last=1, counts down HASH_LATENCY cycles then asserts
 //     sha3_hash_rdy for exactly 1 cycle
 //   - sha3_hash_in packs stored words MSB-first so that out_fifo[i] == word[i]
+//   - Output is 512 bits split into 16x32-bit words (from 8x64-bit input words)
 // ============================================================================
 
 struct KeccakStub {
     static constexpr int HASH_LATENCY = 10;  // cycles to "compute"
-    static constexpr int MAX_WORDS    = 16;  // 512 bits / 32
+    static constexpr int MAX_WORDS64  = 8;   // 512 bits / 64
+    static constexpr int MAX_WORDS32  = 16;  // 512 bits / 32
 
-    uint32_t stored_words[MAX_WORDS];
+    uint64_t stored_words64[MAX_WORDS64];  // input as 64-bit words
     int      word_count;
     int      cooldown;       // cycles until hash_rdy
     bool     hash_pending;
@@ -96,7 +98,7 @@ struct KeccakStub {
     KeccakStub() { reset(); }
 
     void reset() {
-        memset(stored_words, 0, sizeof(stored_words));
+        memset(stored_words64, 0, sizeof(stored_words64));
         word_count   = 0;
         cooldown     = 0;
         hash_pending = false;
@@ -106,7 +108,7 @@ struct KeccakStub {
     // Call AFTER raising clock and calling eval().
     // in_ready, in_data, is_last, byte_num, rst mirror the controller outputs.
     void on_posedge(bool rst,
-                    uint32_t in_data, bool in_ready,
+                    uint64_t in_data, bool in_ready,
                     bool is_last, int byte_num) {
         if (rst) {
             reset();
@@ -119,7 +121,7 @@ struct KeccakStub {
         if (hash_ready) {
             hash_ready = false;
             word_count = 0;
-            memset(stored_words, 0, sizeof(stored_words));
+            memset(stored_words64, 0, sizeof(stored_words64));
         }
 
         // Count down towards hash output
@@ -130,13 +132,13 @@ struct KeccakStub {
             }
         }
 
-        // Accept a word from the controller
+        // Accept a 64-bit word from the controller
         if (in_ready && !hash_pending) {
             // is_last=1 with byte_num=0 is the zero-byte final padding pulse:
             // no actual data bytes, so don't store it.
             bool has_data = !(is_last && byte_num == 0);
-            if (has_data && word_count < MAX_WORDS) {
-                stored_words[word_count++] = in_data;
+            if (has_data && word_count < MAX_WORDS64) {
+                stored_words64[word_count++] = in_data;
             }
             if (is_last) {
                 hash_pending = true;
@@ -147,12 +149,28 @@ struct KeccakStub {
 
     // Drive dut->sha3_hash_in[].
     //   The controller loads:   out_fifo[i] <= sha3_hash_in[511 - 32*i -: 32]
-    //   In Verilator:           sha3_hash_in[15-i] covers bits [511-32*i:480-32*i]
-    // So stored_words[0] → sha3_hash_in[15], stored_words[1] → sha3_hash_in[14] …
+    //   In Verilator:           sha3_hash_in[15-i] corresponds to out_fifo[i]
+    // Each 64-bit stored word = {high32, low32} splits into 2x32-bit output words.
+    // stored_words64[0] = {words[0], words[1]} (WB pairing: first write=high).
+    // We want: out_fifo[0]=words[0], out_fifo[1]=words[1], preserving write order.
+    // Mapping:
+    //   out_fifo[2*i]   = high 32 of stored_words64[i]  →  sha3_hash_in[15-2*i]
+    //   out_fifo[2*i+1] = low 32 of stored_words64[i]   →  sha3_hash_in[14-2*i]
     void fill_hash_in() {
-        for (int i = 0; i < MAX_WORDS; i++) {
-            int vi = MAX_WORDS - 1 - i;  // Verilator word index
-            dut->sha3_hash_in[vi] = (i < word_count) ? stored_words[i] : 0u;
+        // Clear all first
+        for (int i = 0; i < MAX_WORDS32; i++) {
+            dut->sha3_hash_in[i] = 0u;
+        }
+        // Fill with stored data
+        for (int i = 0; i < word_count && i < MAX_WORDS64; i++) {
+            uint64_t w64 = stored_words64[i];
+            uint32_t high = (uint32_t)(w64 >> 32);
+            uint32_t low = (uint32_t)(w64 & 0xFFFFFFFFull);
+            int idx_low = 15 - 2*i;
+            int idx_high = 14 - 2*i;
+
+            dut->sha3_hash_in[idx_low] = high;   // even out_fifo indices
+            dut->sha3_hash_in[idx_high] = low;   // odd out_fifo indices
         }
     }
 };
@@ -188,10 +206,10 @@ static void tick() {
     // Capture controller→keccak signals on this posedge
     stub.on_posedge(
         (bool)dut->sha3_reset,
-        (uint32_t)dut->sha3_data_out,
+        (uint64_t)dut->sha3_data_out,  // 64-bit word
         (bool)dut->sha3_out_rdy,
         (bool)dut->sha3_is_last,
-        (int)dut->sha3_num_bytes
+        (int)dut->sha3_num_bytes  // 3-bit field (0-7)
     );
 
     // Drive keccak→controller outputs that take effect next cycle
