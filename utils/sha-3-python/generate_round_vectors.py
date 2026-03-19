@@ -11,6 +11,8 @@ Output Format:
   - Input state (1600 bits)
   - Round constant (64 bits)
   - Expected output state (1600 bits)
+
+Note: Developed with the assistance of GitHub Copilot.
 """
 
 import sys

@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """
-Test SHA3_Instrumented implementation against official test vectors and Python's hashlib.
+sha3-tests.py - Unit Tests for SHA3_Instrumented
+==================================================
+Tests the SHA3_Instrumented implementation against official test vectors and Python's hashlib.
+
 Test vectors from: https://www.di-mgt.com.au/sha_testvectors.html
 Copyright (C) 2012-2022 DI Management Services Pty Limited
+
+Note: Developed with the assistance of GitHub Copilot.
 """
 
 import unittest

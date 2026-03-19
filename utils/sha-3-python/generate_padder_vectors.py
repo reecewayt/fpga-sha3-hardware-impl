@@ -17,6 +17,8 @@ Example: 'abc' message
   - Padder adds 0x06: 0x0000000006636261 (little-endian lane)
 
 Output format is a C++ header file with 64-bit test vectors in little-endian format.
+
+Note: Developed with the assistance of GitHub Copilot.
 """
 
 import sys

@@ -1,6 +1,19 @@
-// Testbench for the keccak top-level module.
-// Drives the full keccak pipeline (padder + f_permutation) and compares the
-// hash digest output against official NIST SHA-3 test vectors.
+/*
+ * Testbench: keccak
+ * =================
+ * Verifies the keccak top-level module (padder + f_permutation pipeline)
+ * that implements the complete SHA-3 hash algorithm.
+ *
+ * This testbench drives the full keccak pipeline and compares the hash digest
+ * output against official NIST SHA-3 test vectors across all variants
+ * (SHA3-224, SHA3-256, SHA3-384, SHA3-512).
+ *
+ * Edge protocol tests verify robustness around full-block boundary conditions,
+ * including premature is_last assertions and spurious non-last pulses while
+ * the buffer is full.
+ *
+ * Note: This testbench was developed with the assistance of GitHub Copilot.
+ */
 
 #include <iostream>
 #include <iomanip>

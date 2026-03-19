@@ -1,17 +1,17 @@
+#!/usr/bin/env python3
 """
-SHA-3 (Keccak) - Instrumented Implementation for Hardware Validation
-======================================================================
+sha3.py - SHA-3 (Keccak) Instrumented Implementation
+=====================================================
 A high-granularity SHA-3 implementation designed specifically for FPGA hardware validation.
-This module captures intermediate state snapshots after each transformation step in the 
+This module captures intermediate state snapshots after each transformation step in the
 Keccak-f[1600] permutation, enabling verification of hardware module outputs.
 
 Features:
----------
+----------
 - Full SHA-3 implementation supporting all variants (SHA3-224, SHA3-256, SHA3-384, SHA3-512)
 - Detailed state logging after each step: theta (θ), rho (ρ), pi (π), chi (χ), iota (ι)
 - Snapshot capture at absorb, padding, and squeeze phases
 - Verified against official NIST test vectors and Python hashlib
-
 
 Note:
 -----
@@ -19,8 +19,10 @@ This implementation prioritizes clarity and instrumentation over performance.
 It is intended for generating test vectors and validating hardware implementations,
 not for production hashing.
 
-Directly based off of the Keccak reference implementation.
-Source: https://github.com/XKCP/XKCP/blob/master/Standalone/CompactFIPS202/Python/CompactFIPS202.py#L11
+Based on the Keccak reference implementation:
+https://github.com/XKCP/XKCP/blob/master/Standalone/CompactFIPS202/Python/CompactFIPS202.py
+
+Note: Developed with the assistance of GitHub Copilot.
 """
 
 
