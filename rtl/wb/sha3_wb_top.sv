@@ -1,10 +1,16 @@
 /*
-    sha3_wb_top.sv - Top-level wrapper connecting Wishbone SHA3 peripheral
-                     to the keccak core.
-
-    This module exposes only the Wishbone bus externally and wires the
-    internal WB-side SHA3 streaming interface directly into keccak.
-*/
+ * sha3_wb_top.sv - Wishbone SHA-3 Peripheral Top-Level Wrapper
+ *
+ * Authors: Claude and Truong Le
+ *
+ * Description:
+ *     Top-level wrapper connecting the Wishbone SHA-3 peripheral controller
+ *     to the keccak core. Exposes only the Wishbone bus externally, bridging
+ *     the WB-side control/FIFO interface to the SHA-3 streaming pipeline.
+ *
+ * Note:
+ *     Generated with the help of GitHub Copilot.
+ */
 
 import sha3_pkg::*;
 

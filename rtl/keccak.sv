@@ -1,4 +1,6 @@
 /*
+ * keccak.sv - SHA-3 Top-Level Hash Pipeline
+ *
  * Copyright 2013, Homer Hsing <homer.hsing@gmail.com>
  * Modified 2026, Adapted to SystemVerilog with programmable variant support
  *
@@ -6,13 +8,24 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Description:
+ *     Top-level module integrating the padder (SHA-3 message padding) and
+ *     f_permutation (Keccak-f[1600] permutation) to implement the complete
+ *     SHA-3 hash function. Supports runtime variant selection (SHA3-224,
+ *     SHA3-256, SHA3-384, SHA3-512) and streams data through the sponge
+ *     construction phases (absorb → squeeze).
+ *
+ * Note:
+ *     this SHA3 IP module from OpenCores has been ported to SystemVerilog
+ *     with the help of AI tools.
  */
 
 /* "is_last" == 0 means byte number is 8 (full 64-bit word), no matter what value "byte_num" is. */

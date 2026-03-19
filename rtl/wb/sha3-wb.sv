@@ -1,40 +1,41 @@
 /*
-    sha3-wb.sv - Wishbone interface for SHA3 (Keccak) IP Core
-
-    Authors: Claude and Truong
-
-    Description: This module creates a Wishbone peripheral that controls
-    a SHA3 IP core. It implements input/output FIFOs to transport data from
-    and to the user program. The module provides registers for control/status
-    to initiate encryption requests with a selected SHA3 function.
-
-    Address map (wb_adr_i[5:2] decodes the register):
-      0x00  Control       R/W  START[0], ABORT[2], MODE[4:3]
-      0x04  Status        R    IDLE[0], BUSY[1], DONE[2], IN_EMPTY[4], IN_FULL[5],
-                                OUT_EMPTY[6], OUT_FULL[7], ERR_ILL[8], ERR_UF[9], ERR_OF[10]
-      0x08  IN_FIFO_DATA  W    Push 32-bit word into input FIFO (stalls while full)
-      0x0C  IN_FIFO_LEVEL R    Number of words in input FIFO
-      0x10  OUT_FIFO_DATA R    Pop 32-bit word from output FIFO
-      0x14  OUT_FIFO_LEVEL R   Number of words in output FIFO
-      0x18  MSG_LEN_LO    R/W  Low 32 bits of message length (bytes)
-      0x1C  MSG_LEN_HI    R/W  High 32 bits of message length (bytes)
-
-    SHA3 Core Interface (maps to keccak.sv ports):
-      sha3_data_out  → in[63:0]        (64-bit, paired from two 32-bit WB writes)
-      sha3_num_bytes → byte_num[2:0]   (0-7 valid bytes, 0 = 8 bytes full word)
-      sha3_variant   → variant[1:0]    (SHA3 variant from MODE bits)
-      sha3_out_rdy   → in_ready
-      sha3_is_last   → is_last
-      sha3_buff_full ← buffer_full
-      sha3_hash_in   ← out[511:0]
-      sha3_hash_rdy  ← out_ready
-      sha3_reset     → reset
-
-    Word Pairing: WB is 32-bit but keccak expects 64-bit words. The module
-    internally buffers consecutive 32-bit writes and combines them into 64-bit
-    words before sending to the keccak core (little-endian: first write = low 32).
-
-*/
+ * sha3-wb.sv - Wishbone Interface for SHA-3 IP Core
+ *
+ * Authors: Claude and Truong Le
+ *
+ * Description:
+ *     Wishbone peripheral that controls a SHA-3 IP core, implementing
+ *     input/output FIFOs for data transport and registers for control/status
+ *     to initiate hashing requests with a selected SHA-3 variant.
+ *
+ * Address map (wb_adr_i[5:2] decodes the register):
+ *     0x00  Control       R/W  START[0], ABORT[2], MODE[4:3]
+ *     0x04  Status        R    IDLE[0], BUSY[1], DONE[2], IN_EMPTY[4], IN_FULL[5],
+ *                              OUT_EMPTY[6], OUT_FULL[7], ERR_ILL[8], ERR_UF[9], ERR_OF[10]
+ *     0x08  IN_FIFO_DATA  W    Push 32-bit word into input FIFO (stalls while full)
+ *     0x0C  IN_FIFO_LEVEL R    Number of words in input FIFO
+ *     0x10  OUT_FIFO_DATA R    Pop 32-bit word from output FIFO
+ *     0x14  OUT_FIFO_LEVEL R   Number of words in output FIFO
+ *     0x18  MSG_LEN_LO    R/W  Low 32 bits of message length (bytes)
+ *     0x1C  MSG_LEN_HI    R/W  High 32 bits of message length (bytes)
+ *
+ * SHA3 Core Interface (maps to keccak.sv ports):
+ *     sha3_data_out  → in[63:0]        (64-bit, paired from two 32-bit WB writes)
+ *     sha3_num_bytes → byte_num[2:0]   (0-7 valid bytes, 0 = 8 bytes full word)
+ *     sha3_variant   → variant[1:0]    (SHA3 variant from MODE bits)
+ *     sha3_out_rdy   → in_ready
+ *     sha3_is_last   → is_last
+ *     sha3_buff_full ← buffer_full
+ *     sha3_hash_in   ← out[511:0]
+ *     sha3_hash_rdy  ← out_ready
+ *     sha3_reset     → reset
+ *
+ * Word Pairing: WB is 32-bit but keccak expects 64-bit words. The module
+ * internally buffers consecutive 32-bit writes and combines them into 64-bit
+ * words before sending to the keccak core (little-endian: first write = low 32).
+ *
+ * Note: Generated with the help of GitHub Copilot.
+ */
 
 import sha3_pkg::*;
 
@@ -250,7 +251,7 @@ module sha3_wb
                              (word_phase && (bytes_remaining >= 1) && (bytes_remaining <= 4)) ||
                              final_pulse);
 
-        // is_last: assert on final partial data word or final zero-byte pulse
+    // is_last: assert on final partial data word or final zero-byte pulse
     assign sha3_is_last   = (state == S_ABSORB) && !sha3_buff_full &&
                                                         ((is_last_data_word && word_phase &&
                                                             ((bytes_remaining <= 4) || in_head_valid)) ||
