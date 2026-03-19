@@ -1,20 +1,33 @@
 /*
+ * f_permutation.sv - Keccak-f[1600] Finite State Permutation Engine
+ *
  * Copyright 2013, Homer Hsing <homer.hsing@gmail.com>
+ * Modified 2026, Adapted to SystemVerilog
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Description:
+ *     Implements the 24-round Keccak-f[1600] permutation operating on a
+ *     1600-bit state as defined in the FIPS 202 standard. The module
+ *     sequentially applies round transformations and is ported to
+ *     SystemVerilog from the original OpenCores Verilog implementation.
+ *
+ * Note:
+ *     this SHA3 IP module from OpenCores has been ported to SystemVerilog
+ *     with the help of AI tools.
  */
 
-/* if "ack" is 1, then current input has been used. */
+ /* if "ack" is 1, then current input has been used. */
 
 import sha3_pkg::*;
 

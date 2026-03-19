@@ -1,3 +1,17 @@
+/*
+ * sha3_pkg.sv - Shared Constants, Types, and Utilities for SHA-3 RTL
+ *
+ * Description:
+ *     This package defines Keccak/SHA-3 architectural constants, programmable
+ *     variant configuration, lane/state type aliases, and helper functions
+ *     used across the SHA3 RTL modules. It centralizes rate/capacity parameters,
+ *     indexing utilities, and mathematical operations (ROL, lane indexing)
+ *     required by round and permutation logic.
+ *
+ * Note:
+ *     Created with the help of AI tools.
+ */
+
 package sha3_pkg;
     // Constants
     localparam int STATE_WIDTH = 1600;

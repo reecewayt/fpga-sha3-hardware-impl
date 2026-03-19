@@ -1,9 +1,13 @@
 /*
-    tb_sha3_wb_top.cpp - WB integration testbench for sha3_wb_top
-
-    Drives Wishbone transactions into sha3_wb_top (sha3_wb + keccak) and
-    verifies digest words against official NIST vectors.
-*/
+ * Testbench: sha3_wb_top
+ * ======================
+ * Integration testbench for the sha3_wb_top module (sha3_wb + keccak).
+ *
+ * Drives Wishbone transactions into the complete sha3_wb_top system and
+ * verifies digest words against official NIST SHA-3 test vectors.
+ *
+ * Note: This testbench was developed with the assistance of GitHub Copilot.
+ */
 
 #include <cstdint>
 #include <iomanip>

@@ -1,3 +1,16 @@
+/*
+ * Testbench: rconst_lut
+ * =====================
+ * Verifies the round constant lookup table (rconst_lut) module that provides
+ * the 24 round constants (RC values) used in each round of the Keccak-f[1600]
+ * permutation.
+ *
+ * The test vectors are the official RC values from the Keccak team reference
+ * implementation, specified in the FIPS 202 standard.
+ *
+ * Note: This testbench was developed with the assistance of GitHub Copilot.
+ */
+
 #include <iostream>
 #include <vector>
 #include <iomanip>

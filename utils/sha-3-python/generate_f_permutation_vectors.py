@@ -22,8 +22,7 @@ Where MAX_RATE = 1152 (SHA3-224 rate, the widest).
 
 The 18 lanes of `in[1151:0]` map to Python lanes in this order:
   in[1151:1088]  <->  A[0][0]   (in[1151] = A[0][0] bit 63 = MSB)
-  in[1087:1024]  <->  A[1][0]
-  in[1023: 960]  <->  A[2][0]
+  in[1087:1024]  <->  A[1][0]  in[1023: 960]  <->  A[2][0]
   in[ 959: 896]  <->  A[3][0]
   in[ 895: 832]  <->  A[4][0]
   in[ 831: 768]  <->  A[0][1]
@@ -50,6 +49,8 @@ Hardware `out` state words (50 x uint32_t, MSB-first):
   out_words[0]  = state[1599:1568]  = A[0][0] upper 32 bits
   out_words[1]  = state[1567:1536]  = A[0][0] lower 32 bits
   out_words[2k] = A[x][y] upper 32 bits  (x,y per GRID scan: y outer, x inner)
+
+Note: Developed with the assistance of GitHub Copilot.
 """
 
 import sys

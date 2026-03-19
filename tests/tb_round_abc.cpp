@@ -1,5 +1,7 @@
-/**
- * tb_round_abc.cpp - End-to-end SHA-3-256 tests for the round module.
+/*
+ * Testbench: round_abc
+ * ====================
+ * End-to-end test of the round module with NIST SHA-3-256 test vectors.
  *
  * Drives the combinational `round` module for all 24 Keccak-f[1600] rounds
  * for two NIST SHA-3-256 test vectors, comparing the resulting digest.
@@ -16,6 +18,8 @@
  *   The padded message block is XOR'd into the zero state.
  *   Padding: append 0x06 immediately after message, then zeros, then 0x80
  *   at the last byte of the rate block (byte 135).
+ *
+ * Note: This testbench was developed with the assistance of GitHub Copilot.
  *
  * Digest extraction (SHA-3-256 squeeze):
  *   First 256 bits = lanes A[0][0]..A[3][0] serialised little-endian.

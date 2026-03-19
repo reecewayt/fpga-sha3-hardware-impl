@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
-Full Keccak trace for the "abc" SHA3-256 test vector.
+trace_abc.py - Full Keccak Trace Generator for SHA3-256
+========================================================
+Generates a complete trace of the Keccak-f[1600] permutation for the "abc" test vector.
 
 Runs SHA3_Instrumented on b"abc" and dumps every intermediate state snapshot
-(after each theta, rho/pi, chi, iota step inside every round, plus absorb /
-padding / squeeze milestones) to a text file for hardware validation.
+(after each theta, rho/pi, chi, iota step inside every round, plus absorb/
+padding/squeeze milestones) to a text file for hardware validation.
 
 Expected digest: 3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532
+
+Note: Developed with the assistance of GitHub Copilot.
 """
 
 import sys

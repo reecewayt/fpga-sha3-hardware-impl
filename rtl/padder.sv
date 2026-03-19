@@ -1,3 +1,33 @@
+/*
+ * padder.sv - SHA-3 Message Padding and Block Assembly
+ *
+ * Copyright 2013, Homer Hsing <homer.hsing@gmail.com>
+ * Modified 2026, Adapted to SystemVerilog
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Description:
+ *     This module accepts 64-bit message words and applies SHA-3 multi-rate
+ *     padding (pad10*1) as specified in FIPS 202. It handles domain suffix
+ *     insertion, final block sentinel generation, and assembles rate-sized
+ *     absorption blocks for the Keccak-f permutation core. Tracks state for
+ *     multi-block messages.
+ *
+ * Note:
+ *     this SHA3 IP module from OpenCores has been ported to SystemVerilog
+ *     with the help of AI tools.
+ */
+
 import sha3_pkg::*;
 
 module padder (

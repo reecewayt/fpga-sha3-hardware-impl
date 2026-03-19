@@ -7,6 +7,8 @@ outputting them in the format expected by the keccak testbench.
 
 Usage:
     python3 generate_sha3_nist_vectors.py [--output FILE.h] [--msgs msg1 msg2 ...]
+
+Note: Developed with the assistance of GitHub Copilot.
 """
 
 import hashlib

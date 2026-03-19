@@ -1,35 +1,37 @@
 /*
-    tb_sha3_wb.cpp - Verilator testbench for sha3_wb Wishbone controller
-
-    Authors: Claude and Truong
-
-    Description: This testbench creates several tests to check the functionality
-    of the sha3-wb.sv module. This testbench acts as a Wishbone master and directly 
-    drives the SHA3 core interface, replacing the real keccak core with a C++ stub that:
-      - Accepts data words presented by the controller (sha3_out_rdy=1)
-      - Stores up to 16 words internally
-      - After observing is_last, waits HASH_LATENCY cycles then asserts
-        sha3_hash_rdy=1 for 1 cycle with the stored words in sha3_hash_in
-        (MSB = first word received, matching the controller's out_fifo layout)
-
-    Verification: the OUT_FIFO words read back over Wishbone are compared
-    against the words originally written to IN_FIFO.
-
-    Register addresses (byte offsets):
-        0x00  Control  (START[0], ABORT[2], MODE[4:3])
-        0x04  Status
-        0x08  IN_FIFO_DATA
-        0x0C  IN_FIFO_LEVEL
-        0x10  OUT_FIFO_DATA
-        0x14  OUT_FIFO_LEVEL
-        0x18  MSG_LEN_LO
-        0x1C  MSG_LEN_HI
-
-    Status register bits:
-        [0]  IDLE   [1] BUSY   [2] DONE
-        [4]  IN_EMPTY  [5] IN_FULL  [6] OUT_EMPTY  [7] OUT_FULL
-        [8]  ERR_ILLEGAL_WHILE_BUSY  [9] ERR_UF  [10] ERR_OF
-*/
+ * Testbench: sha3_wb
+ * ==================
+ * Verilator testbench for the sha3_wb Wishbone bus controller.
+ *
+ * This testbench verifies the functionality of the sha3_wb.sv module by acting
+ * as a Wishbone master and driving the SHA3 core interface. It replaces the
+ * real keccak core with a C++ stub that:
+ *   - Accepts data words presented by the controller (sha3_out_rdy=1)
+ *   - Stores up to 16 words internally
+ *   - After observing is_last, waits HASH_LATENCY cycles then asserts
+ *     sha3_hash_rdy=1 for 1 cycle with the stored words in sha3_hash_in
+ *     (MSB = first word received, matching the controller's out_fifo layout)
+ *
+ * Verification: the OUT_FIFO words read back over Wishbone are compared
+ * against the words originally written to IN_FIFO.
+ *
+ * Register addresses (byte offsets):
+ *     0x00  Control  (START[0], ABORT[2], MODE[4:3])
+ *     0x04  Status
+ *     0x08  IN_FIFO_DATA
+ *     0x0C  IN_FIFO_LEVEL
+ *     0x10  OUT_FIFO_DATA
+ *     0x14  OUT_FIFO_LEVEL
+ *     0x18  MSG_LEN_LO
+ *     0x1C  MSG_LEN_HI
+ *
+ * Status register bits:
+ *     [0]  IDLE   [1] BUSY   [2] DONE
+ *     [4]  IN_EMPTY  [5] IN_FULL  [6] OUT_EMPTY  [7] OUT_FULL
+ *     [8]  ERR_ILLEGAL_WHILE_BUSY  [9] ERR_UF  [10] ERR_OF
+ *
+ * Note: This testbench was developed with the assistance of GitHub Copilot.
+ */
 
 #include <iostream>
 #include <iomanip>

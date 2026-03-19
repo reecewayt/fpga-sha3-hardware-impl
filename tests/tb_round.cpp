@@ -1,3 +1,16 @@
+/*
+ * Testbench: round
+ * ================
+ * Verifies a single round of the Keccak-f[1600] permutation, which applies
+ * the five transformation steps: theta (θ), rho (ρ), pi (π), chi (χ), and
+ * iota (ι) with a round constant.
+ *
+ * This is a combinational testbench that validates the correct application
+ * of each round transformation against known test vectors.
+ *
+ * Note: This testbench was developed with the assistance of GitHub Copilot.
+ */
+
 #include <iostream>
 #include <iomanip>
 #include <cstdint>

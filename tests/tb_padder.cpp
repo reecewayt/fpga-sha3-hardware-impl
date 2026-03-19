@@ -1,13 +1,16 @@
 /*
- * Testbench: padder (64-bit word format)
- * =======================================
- * Verifies the padder module using 64-bit little-endian word format
- * that matches the f_permutation module.
+ * Testbench: padder
+ * =================
+ * Verifies the padder module (64-bit word format) that implements pad10*1
+ * padding as specified in FIPS 202 for SHA-3.
  *
  * Data Flow: keccak.sv byte swap → Padder → f_permutation
  *
  * The test vectors simulate data AFTER keccak.sv's byte swap operation,
- * so all data is in little-endian format.
+ * so all data is in little-endian format. The padder accepts 64-bit words
+ * and produces padded message blocks ready for the f_permutation module.
+ *
+ * Note: This testbench was developed with the assistance of GitHub Copilot.
  */
 
 #include <iostream>

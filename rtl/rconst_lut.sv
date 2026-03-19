@@ -1,6 +1,6 @@
 /*
- * Module: sha3_rc_lut
- * -------------------
+ * rconst_lut.sv - SHA-3 Round Constant Lookup Table
+ *
  * Implementation of SHA-3 (Keccak) Round Constants using an area-optimized 
  * 7-bit Look-Up Table (LUT).
  *
@@ -22,9 +22,10 @@
  * is reconstructed by mapping these 7 bits to their respective positions 
  * and tying the remaining 57 bits to logic 0.
  *
- * Source: https://chemejon.wordpress.com/2021/12/06/sha-3-explained-in-plain-english/
+ *     Source: https://chemejon.wordpress.com/2021/12/06/sha-3-explained-in-plain-english/
  *
- * Note: Generated using Gemini AI
+ * Note:
+ *     Created with the help of Gemini AI.
  */
 module rconst_lut (
     input  logic [4:0]  rnd_idx, // 0 to 23

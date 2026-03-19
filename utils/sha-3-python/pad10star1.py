@@ -1,13 +1,14 @@
 
+#!/usr/bin/env python3
 """
-SHA-3 pad10*1 padding function
-
-Implements the padding scheme from FIPS 202 Section 5.1:
+pad10star1.py - SHA-3 pad10*1 Padding Function
+===============================================
+Implements the padding scheme from FIPS 202 Section 5.1 for SHA-3:
     Padded message = M || d || 0x01 || 0x00...00 || 0x80
-    
+
 Where:
     - M is the original message
-    - d is the domain suffix (0x60 for SHA-3, which represents bits '01' LSB-first + '1' from pad10*1)
+    - d is the domain suffix (0x60 for SHA-3, representing bits '01' LSB-first + '1')
     - The padding ensures the result is a multiple of the rate in bytes
     - The final 0x01 byte represents the trailing '1' bit of pad10*1
 
@@ -15,11 +16,13 @@ The pad10*1 padding rule:
     - Append bits: 1 || 0^j || 1
     - Where j is chosen so that the total length is a multiple of rate
     - j = (-m - 2) mod rate, where m is message length in bits
-    
+
 For SHA-3 (domain suffix = 2 bits '01'):
     - Total padding: 01 || 1 || 0^j || 1
     - j = (-m - 4) mod rate in bits
     - Or in bytes: (-m_bytes - padding_overhead) mod rate_bytes
+
+Note: Developed with the assistance of GitHub Copilot.
 """
 
 
